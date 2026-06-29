@@ -25,8 +25,11 @@ const ACTION_TYPE: &str = "Action";
 
 /// Errors raised while translating an AuthZEN request into Cedar inputs.
 ///
-/// All variants map to an HTTP 400 (bad request) in the handler.
+/// All variants map to an HTTP 400 (bad request) in the handler. The shared
+/// `Invalid` prefix mirrors the stable error codes (`invalid_*`) returned to
+/// the client (see [`ConversionError::code`]), so it is kept deliberately.
 #[derive(Debug, Error)]
+#[allow(clippy::enum_variant_names)]
 pub enum ConversionError {
     /// A `type`/`id`/`name` could not be parsed into a Cedar entity uid.
     #[error("invalid entity reference: {0}")]
@@ -118,4 +121,161 @@ pub fn to_cedar(
         .map_err(|e| ConversionError::InvalidProperties(e.to_string()))?;
 
     Ok((request, entities))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::authzen::{Action, Resource, Subject};
+
+    /// A schema mirroring `policies/schema.cedar.json`: a `login` action from
+    /// `User` to `Client`, with optional identity attributes and a `context.ip`.
+    fn schema() -> Schema {
+        Schema::from_json_value(json!({
+            "": {
+                "entityTypes": {
+                    "User": { "shape": { "type": "Record", "attributes": {
+                        "user_type": { "type": "String", "required": false },
+                        "department": { "type": "String", "required": false }
+                    }}},
+                    "Client": { "shape": { "type": "Record", "attributes": {} } }
+                },
+                "actions": {
+                    "login": { "appliesTo": {
+                        "principalTypes": ["User"],
+                        "resourceTypes": ["Client"],
+                        "context": { "type": "Record", "attributes": {
+                            "ip": { "type": "String", "required": false }
+                        }}
+                    }}
+                }
+            }
+        }))
+        .expect("test schema is valid")
+    }
+
+    /// Build a `login` request for `User::"<user>"` -> `Client::"<client>"`.
+    fn login_request(
+        user: &str,
+        client: &str,
+        properties: Option<Map<String, Value>>,
+        context: Option<Value>,
+    ) -> EvaluationRequest {
+        EvaluationRequest {
+            subject: Subject {
+                entity_type: "User".into(),
+                id: user.into(),
+                properties,
+            },
+            action: Action {
+                name: "login".into(),
+                properties: None,
+            },
+            resource: Resource {
+                entity_type: "Client".into(),
+                id: client.into(),
+                properties: None,
+            },
+            context,
+        }
+    }
+
+    fn props(pairs: &[(&str, &str)]) -> Map<String, Value> {
+        pairs
+            .iter()
+            .map(|(k, v)| ((*k).to_string(), Value::String((*v).to_string())))
+            .collect()
+    }
+
+    /// Is an entity with `<entity_type>::"<id>"` present in the store?
+    /// (Cedar also materialises schema action entities, so exact counts are
+    /// brittle; we assert on the specific uids we care about instead.)
+    fn contains(entities: &Entities, entity_type: &str, id: &str) -> bool {
+        let uid = entity_uid(entity_type, id).expect("valid uid");
+        entities.iter().any(|e| e.uid() == uid)
+    }
+
+    #[test]
+    fn valid_request_with_subject_properties() {
+        let req = login_request(
+            "alice",
+            "a-client",
+            Some(props(&[("user_type", "employee"), ("department", "eng")])),
+            Some(json!({ "ip": "10.0.0.1" })),
+        );
+        let (_request, entities) = to_cedar(&req, &schema()).expect("should convert");
+        // The principal entity is always injected, carrying its attributes.
+        assert!(contains(&entities, "User", "alice"));
+    }
+
+    #[test]
+    fn valid_request_without_properties_or_context() {
+        let req = login_request("bob", "b-client", None, None);
+        let (_request, entities) = to_cedar(&req, &schema()).expect("should convert");
+        assert!(contains(&entities, "User", "bob"));
+    }
+
+    #[test]
+    fn resource_entity_injected_only_with_properties() {
+        // Without properties the resource entity is not injected...
+        let req = login_request("alice", "a-client", None, None);
+        let (_r, entities) = to_cedar(&req, &schema()).expect("convert");
+        assert!(contains(&entities, "User", "alice"));
+        assert!(!contains(&entities, "Client", "a-client"));
+
+        // ...an empty properties map is treated the same (filtered out)...
+        let mut req = login_request("alice", "a-client", None, None);
+        req.resource.properties = Some(props(&[]));
+        let (_r, entities) = to_cedar(&req, &schema()).expect("convert");
+        assert!(!contains(&entities, "Client", "a-client"));
+    }
+
+    #[test]
+    fn unknown_context_attribute_is_rejected() {
+        let req = login_request(
+            "alice",
+            "a-client",
+            None,
+            Some(json!({ "unknown_attr": "x" })),
+        );
+        let err = to_cedar(&req, &schema()).expect_err("should reject unknown context attr");
+        assert_eq!(err.code(), "invalid_context");
+    }
+
+    #[test]
+    fn unknown_subject_property_is_rejected() {
+        let req = login_request(
+            "alice",
+            "a-client",
+            Some(props(&[("not_in_schema", "x")])),
+            None,
+        );
+        let err = to_cedar(&req, &schema()).expect_err("should reject unknown property");
+        assert_eq!(err.code(), "invalid_properties");
+    }
+
+    #[test]
+    fn unknown_action_is_rejected() {
+        let mut req = login_request("alice", "a-client", None, None);
+        req.action.name = "logout".into();
+        let err = to_cedar(&req, &schema()).expect_err("should reject unknown action");
+        assert_eq!(err.code(), "invalid_request");
+    }
+
+    #[test]
+    fn principal_type_not_allowed_for_action_is_rejected() {
+        let mut req = login_request("alice", "a-client", None, None);
+        // `Client` is a valid schema type but not a valid principal for `login`.
+        req.subject.entity_type = "Client".into();
+        let err = to_cedar(&req, &schema()).expect_err("should reject wrong principal type");
+        assert_eq!(err.code(), "invalid_request");
+    }
+
+    #[test]
+    fn malformed_entity_type_is_rejected() {
+        let mut req = login_request("alice", "a-client", None, None);
+        req.subject.entity_type = "123 not a type".into();
+        let err = to_cedar(&req, &schema()).expect_err("should reject malformed type name");
+        assert_eq!(err.code(), "invalid_entity");
+    }
 }
