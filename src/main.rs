@@ -53,7 +53,7 @@ fn main() -> ExitCode {
     {
         Ok(runtime) => runtime,
         Err(error) => {
-            eprintln!("failed to start tokio runtime: {error}");
+            eprintln!("tokio ランタイムの起動に失敗しました: {error}");
             return ExitCode::FAILURE;
         }
     };
@@ -61,8 +61,8 @@ fn main() -> ExitCode {
     match runtime.block_on(run_server()) {
         Ok(()) => ExitCode::SUCCESS,
         Err(error) => {
-            error!("fatal: {error}");
-            eprintln!("fatal: {error}");
+            error!("致命的エラー: {error}");
+            eprintln!("致命的エラー: {error}");
             ExitCode::FAILURE
         }
     }
@@ -76,7 +76,7 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
 
     let cfg = Config::from_env()?;
     info!(
-        "starting authzen-sidecar: bind={} policy={} schema={} refresh={:?}",
+        "authzen-sidecar を起動します: bind={} policy={} schema={} refresh={:?}",
         cfg.bind, cfg.policy_path, cfg.schema_path, cfg.refresh
     );
 
@@ -101,7 +101,7 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
         policy_set_provider::ConfigBuilder::default()
             .policy_set_path(cfg.policy_path.clone())
             .build()
-            .map_err(|e| format!("policy provider config: {e}"))?,
+            .map_err(|e| format!("ポリシープロバイダの設定エラー: {e}"))?,
     )?);
 
     // スキーマに対して型検査に通らないポリシーは提供開始前に弾く
@@ -109,7 +109,7 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
     // スキーマが定義しない型・属性・アクションへの参照はこの strict 検証で初めて
     // 捕捉できる。失敗時は起動を中止する（fail-fast）。
     validate_policies(&cfg.policy_path, &schema)
-        .map_err(|e| format!("startup policy schema validation failed: {e}"))?;
+        .map_err(|e| format!("起動時のポリシースキーマ検証に失敗しました: {e}"))?;
 
     // 認可器を構築する。`Authorizer` は cedar-local-agent の高レベル API で、
     // 「ポリシー供給（PolicySetProvider）＋ エンティティ供給（EntityProvider）＋
@@ -128,7 +128,7 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
             .policy_set_provider(provider.clone())
             .entity_provider(Arc::new(EntityProvider::default()))
             .build()
-            .map_err(|e| format!("authorizer config: {e}"))?,
+            .map_err(|e| format!("認可器の設定エラー: {e}"))?,
     ));
 
     // 起動時ロードが成功したので readiness は true で開始する。以降のリロードが
@@ -158,7 +158,7 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
         .with_state(state);
 
     let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
-    info!("listening on http://{}", cfg.bind);
+    info!("http://{} で待ち受けを開始しました", cfg.bind);
     // axum サーバを起動し、SIGTERM/Ctrl-C でグレースフルにシャットダウンする。
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
@@ -201,8 +201,8 @@ fn spawn_reload_task(
                     // を報告する。
                     if let Err(error) = validate_policies(&policy_path, &schema) {
                         error!(
-                            "policy reload rejected: schema validation failed \
-                             ({error}); serving previous policy"
+                            "ポリシーのリロードを却下しました: スキーマ検証に失敗 \
+                             ({error}); 直前のポリシーで提供を継続します"
                         );
                         ready.store(false, Ordering::Relaxed);
                         continue;
@@ -211,18 +211,18 @@ fn spawn_reload_task(
                     // `PolicySet` を差し替える（`UpdateProviderData` トレイト）。
                     match provider.update_provider_data().await {
                         Ok(()) => {
-                            info!("policy reloaded: {event:?}");
+                            info!("ポリシーをリロードしました: {event:?}");
                             ready.store(true, Ordering::Relaxed);
                         }
                         Err(error) => {
-                            error!("policy reload failed (serving previous policy): {error:?}");
+                            error!("ポリシーのリロードに失敗しました（直前のポリシーで提供を継続）: {error:?}");
                             ready.store(false, Ordering::Relaxed);
                         }
                     }
                 }
                 Err(error) => {
                     // チャネルが閉じた = 監視タスクが終了した。ループを抜ける。
-                    error!("policy reload channel closed: {error:?}");
+                    error!("ポリシーリロードのチャネルが閉じました: {error:?}");
                     break;
                 }
             }
@@ -239,9 +239,9 @@ fn spawn_reload_task(
 fn validate_policies(policy_path: &str, schema: &Schema) -> Result<(), String> {
     // ファイルを読み、cedar-policy の `PolicySet` としてパースする（構文検証）。
     let src = std::fs::read_to_string(policy_path)
-        .map_err(|e| format!("read `{policy_path}`: {e}"))?;
+        .map_err(|e| format!("`{policy_path}` の読み込みに失敗: {e}"))?;
     let policy_set =
-        PolicySet::from_str(&src).map_err(|e| format!("parse `{policy_path}`: {e}"))?;
+        PolicySet::from_str(&src).map_err(|e| format!("`{policy_path}` のパースに失敗: {e}"))?;
     // cedar-policy の `Validator` でポリシー集合を型検査する。`ValidationMode::Strict`
     // はスキーマに厳密一致しない参照をすべて誤りとして扱う最も厳しいモード。
     let result = Validator::new(schema.clone()).validate(&policy_set, ValidationMode::Strict);
@@ -281,7 +281,7 @@ async fn shutdown_signal() {
             Ok(mut sig) => {
                 sig.recv().await;
             }
-            Err(error) => error!("failed to install SIGTERM handler: {error}"),
+            Err(error) => error!("SIGTERM ハンドラの登録に失敗しました: {error}"),
         }
     };
 
@@ -293,7 +293,7 @@ async fn shutdown_signal() {
         _ = ctrl_c => {}
         _ = terminate => {}
     }
-    info!("shutdown signal received");
+    info!("シャットダウンシグナルを受信しました");
 }
 
 /// `health` サブコマンド: 稼働中サーバの `/healthz` に接続し、0（健全）または 1 で
@@ -304,7 +304,7 @@ fn health_check() -> ExitCode {
     let stream = match TcpStream::connect_timeout(&target, Duration::from_secs(2)) {
         Ok(stream) => stream,
         Err(error) => {
-            eprintln!("health: connect to {target} failed: {error}");
+            eprintln!("health: {target} への接続に失敗しました: {error}");
             return ExitCode::FAILURE;
         }
     };
@@ -329,7 +329,7 @@ fn health_check() -> ExitCode {
     {
         ExitCode::SUCCESS
     } else {
-        eprintln!("health: unexpected response: {:?}", response.lines().next());
+        eprintln!("health: 想定外の応答です: {:?}", response.lines().next());
         ExitCode::FAILURE
     }
 }

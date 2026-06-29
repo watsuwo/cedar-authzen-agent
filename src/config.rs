@@ -28,10 +28,10 @@ pub struct Config {
 #[derive(Debug, Error)]
 pub enum ConfigError {
     /// 必須の環境変数が設定されていない。
-    #[error("missing required environment variable: {0}")]
+    #[error("必須の環境変数が未設定です: {0}")]
     Missing(&'static str),
     /// 環境変数の値をパースできなかった。
-    #[error("invalid value for {0}: {1}")]
+    #[error("{0} の値が不正です: {1}")]
     Invalid(&'static str, String),
 }
 

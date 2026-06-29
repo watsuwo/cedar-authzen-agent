@@ -53,11 +53,11 @@ pub async fn evaluate(State(state): State<AppState>, body: Bytes) -> Response {
             Json(EvaluationResponse::new(allowed)).into_response()
         }
         Err(error) => {
-            error!("authorizer failed: {error:?}");
+            error!("認可器がエラーを返しました: {error:?}");
             error_response(
                 StatusCode::INTERNAL_SERVER_ERROR,
                 "evaluation_failed",
-                "authorization failed",
+                "認可処理に失敗しました",
             )
         }
     }
@@ -90,7 +90,7 @@ pub async fn readyz(State(state): State<AppState>) -> StatusCode {
     if state.ready.load(Ordering::Relaxed) {
         StatusCode::OK
     } else {
-        info!("readiness probe: not ready (last policy reload failed)");
+        info!("レディネスプローブ: not ready（直近のポリシーリロードが失敗）");
         StatusCode::SERVICE_UNAVAILABLE
     }
 }
