@@ -1,108 +1,108 @@
-//! Serde types for the OpenID AuthZEN Authorization API (Access Evaluation +
-//! discovery metadata). See <https://openid.github.io/authzen/> and DESIGN.md §2.
+//! OpenID AuthZEN Authorization API（Access Evaluation とディスカバリメタデータ）
+//! の serde 型定義。<https://openid.github.io/authzen/> および DESIGN.md §2 を参照。
 
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
-/// The Access Evaluation request body (`POST /access/v1/evaluation`).
+/// Access Evaluation のリクエストボディ（`POST /access/v1/evaluation`）。
 ///
-/// `subject`, `action` and `resource` are REQUIRED; `context` is OPTIONAL.
+/// `subject`・`action`・`resource` は必須、`context` は任意。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EvaluationRequest {
-    /// The principal asking for access (mapped to the Cedar principal).
+    /// アクセスを要求する主体（Cedar の principal に対応）。
     pub subject: Subject,
-    /// The action being attempted (mapped to the Cedar action).
+    /// 試みられているアクション（Cedar の action に対応）。
     pub action: Action,
-    /// The resource being accessed (mapped to the Cedar resource).
+    /// アクセス対象のリソース（Cedar の resource に対応）。
     pub resource: Resource,
-    /// Environment attributes. Mapped onto the Cedar `Context` (DESIGN.md §2.1).
+    /// 環境属性。Cedar の `Context` に対応づける（DESIGN.md §2.1）。
     #[serde(default)]
     pub context: Option<Value>,
 }
 
-/// AuthZEN Subject: REQUIRED `type` and `id`, OPTIONAL `properties`.
+/// AuthZEN Subject: `type` と `id` は必須、`properties` は任意。
 ///
-/// `properties` carry identity attributes (e.g. `user_type`, `department`) and
-/// are injected as Cedar principal entity attributes (DESIGN.md §2.1).
+/// `properties` はアイデンティティ属性（例: `user_type`, `department`）を運び、
+/// Cedar の principal エンティティ属性として注入される（DESIGN.md §2.1）。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Subject {
-    /// The subject type. Used verbatim as the Cedar entity type name.
+    /// subject の型。Cedar のエンティティ型名としてそのまま使う。
     #[serde(rename = "type")]
     pub entity_type: String,
-    /// The subject id. Used verbatim as the Cedar entity id.
+    /// subject の id。Cedar のエンティティ id としてそのまま使う。
     pub id: String,
-    /// Subject attributes. Mapped onto the Cedar principal entity's attributes.
+    /// subject の属性。Cedar の principal エンティティ属性に対応づける。
     #[serde(default)]
     pub properties: Option<Map<String, Value>>,
 }
 
-/// AuthZEN Resource: REQUIRED `type` and `id`, OPTIONAL `properties`.
+/// AuthZEN Resource: `type` と `id` は必須、`properties` は任意。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Resource {
-    /// The resource type. Used verbatim as the Cedar entity type name.
+    /// resource の型。Cedar のエンティティ型名としてそのまま使う。
     #[serde(rename = "type")]
     pub entity_type: String,
-    /// The resource id. Used verbatim as the Cedar entity id.
+    /// resource の id。Cedar のエンティティ id としてそのまま使う。
     pub id: String,
-    /// Resource attributes. Mapped onto the Cedar resource entity's attributes.
+    /// resource の属性。Cedar の resource エンティティ属性に対応づける。
     #[serde(default)]
     pub properties: Option<Map<String, Value>>,
 }
 
-/// AuthZEN Action: REQUIRED `name`, OPTIONAL `properties`.
+/// AuthZEN Action: `name` は必須、`properties` は任意。
 ///
-/// The Cedar action entity type is always `Action`; `name` becomes the action id.
-/// The set of accepted actions is governed by the Cedar schema (DESIGN.md §2.1),
-/// not hardcoded here.
+/// Cedar のアクションエンティティ型は常に `Action` で、`name` がアクション id に
+/// なる。受け付けるアクションの集合はここにハードコードせず、Cedar スキーマが
+/// 規定する（DESIGN.md §2.1）。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct Action {
-    /// The action name. Used verbatim as the Cedar `Action` entity id.
+    /// アクション名。Cedar の `Action` エンティティ id としてそのまま使う。
     pub name: String,
-    /// Action attributes. Accepted for spec compliance but not evaluated.
+    /// アクション属性。仕様準拠のため受理するが、評価には使わない。
     #[serde(default)]
     pub properties: Option<Map<String, Value>>,
 }
 
-/// The Access Evaluation response body.
+/// Access Evaluation のレスポンスボディ。
 ///
-/// `decision: true` = Cedar `Allow` (normal login permitted, external auth not
-/// forced); `decision: false` = Cedar `Deny` (a `forbid` matched → external auth
-/// is forced). See DESIGN.md §2.1.
+/// `decision: true` = Cedar の `Allow`（通常ログイン許可、外部認証は強制しない）、
+/// `decision: false` = Cedar の `Deny`（`forbid` が一致 → 外部認証を強制）。
+/// DESIGN.md §2.1 を参照。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct EvaluationResponse {
-    /// The boolean authorization decision.
+    /// 真偽値の認可判定。
     pub decision: bool,
 }
 
 impl EvaluationResponse {
-    /// Build a response carrying only a decision.
+    /// 判定のみを持つレスポンスを生成する。
     pub fn new(decision: bool) -> Self {
         Self { decision }
     }
 }
 
-/// PDP metadata returned by `GET /.well-known/authzen-configuration`.
+/// `GET /.well-known/authzen-configuration` が返す PDP メタデータ。
 ///
-/// Only the Access Evaluation capability is advertised in the MVP (DESIGN.md §2).
+/// MVP では Access Evaluation 機能のみを広告する（DESIGN.md §2）。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct AuthzenConfiguration {
-    /// Base URL of this PDP (must match the URL used to fetch this document).
+    /// この PDP のベース URL（この文書を取得した URL と一致する必要がある）。
     pub policy_decision_point: String,
-    /// Absolute URL of the Access Evaluation endpoint.
+    /// Access Evaluation エンドポイントの絶対 URL。
     pub access_evaluation_endpoint: String,
 }
 
-/// Minimal error body returned for 4xx/5xx responses (DESIGN.md §8).
+/// 4xx/5xx レスポンスで返す最小限のエラーボディ（DESIGN.md §8）。
 #[derive(Clone, Debug, Serialize, Deserialize)]
 pub struct ErrorBody {
-    /// A short, stable error code (e.g. `invalid_request`).
+    /// 短く安定したエラーコード（例: `invalid_request`）。
     pub error: String,
-    /// A human-readable detail message.
+    /// 人間可読な詳細メッセージ。
     pub message: String,
 }
 
 impl ErrorBody {
-    /// Build an error body from a code and detail message.
+    /// コードと詳細メッセージからエラーボディを生成する。
     pub fn new(error: impl Into<String>, message: impl Into<String>) -> Self {
         Self {
             error: error.into(),

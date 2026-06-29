@@ -1,5 +1,5 @@
-//! Axum handlers for the AuthZEN endpoints, health and readiness
-//! (DESIGN.md §2, §8, §10).
+//! AuthZEN エンドポイント、ヘルスチェック、レディネスチェックの axum ハンドラ
+//! 群（DESIGN.md §2, §8, §10）。
 
 use std::sync::atomic::Ordering;
 
@@ -15,17 +15,18 @@ use crate::authzen::{AuthzenConfiguration, ErrorBody, EvaluationRequest, Evaluat
 use crate::convert;
 use crate::state::AppState;
 
-/// Build a JSON error response with the given status, code and message (§8).
+/// 指定したステータス・コード・メッセージで JSON エラーレスポンスを組み立てる（§8）。
 fn error_response(status: StatusCode, code: &str, message: impl Into<String>) -> Response {
     (status, Json(ErrorBody::new(code, message))).into_response()
 }
 
-/// `POST /access/v1/evaluation` — evaluate a single AuthZEN access request.
+/// `POST /access/v1/evaluation` — 単一の AuthZEN アクセスリクエストを評価する。
 ///
-/// `200 { "decision": <bool> }` on success; `400` for malformed/invalid input;
-/// `500` if the authorizer itself fails. `decision: false` means a `forbid`
-/// matched → external authentication is forced (DESIGN.md §2.1).
+/// 成功時は `200 { "decision": <bool> }`、入力が不正なら `400`、認可器自体が
+/// 失敗したら `500`。`decision: false` は `forbid` が一致したことを意味し、
+/// 外部認証が強制される（DESIGN.md §2.1）。
 pub async fn evaluate(State(state): State<AppState>, body: Bytes) -> Response {
+    // 1) リクエストボディを AuthZEN の `EvaluationRequest` にデシリアライズ。
     let request: EvaluationRequest = match serde_json::from_slice(&body) {
         Ok(request) => request,
         Err(error) => {
@@ -33,6 +34,8 @@ pub async fn evaluate(State(state): State<AppState>, body: Bytes) -> Response {
         }
     };
 
+    // 2) スキーマ検証しつつ Cedar の `Request`/`Entities` へ変換。変換エラーは
+    //    そのまま安定コード付きの 400 にする。
     let (cedar_request, entities) = match convert::to_cedar(&request, &state.schema) {
         Ok(pair) => pair,
         Err(error) => {
@@ -40,8 +43,12 @@ pub async fn evaluate(State(state): State<AppState>, body: Bytes) -> Response {
         }
     };
 
+    // 3) cedar-local-agent の `Authorizer::is_authorized` で評価する。内部で
+    //    現在のポリシー集合・空のエンティティプロバイダ・リクエスト時エンティティを
+    //    使って判定し、OCSF 認可ログも発行される。
     match state.authorizer.is_authorized(&cedar_request, &entities).await {
         Ok(response) => {
+            // Cedar の `Allow` を `decision: true`（通常ログイン許可）に対応づける。
             let allowed = response.decision() == Decision::Allow;
             Json(EvaluationResponse::new(allowed)).into_response()
         }
@@ -56,10 +63,10 @@ pub async fn evaluate(State(state): State<AppState>, body: Bytes) -> Response {
     }
 }
 
-/// `GET /.well-known/authzen-configuration` — PDP discovery metadata (§2).
+/// `GET /.well-known/authzen-configuration` — PDP のディスカバリメタデータ（§2）。
 ///
-/// The advertised base URL is derived from the request `Host` header so the
-/// `policy_decision_point` value matches the URL used to fetch this document.
+/// 広告するベース URL はリクエストの `Host` ヘッダから導出する。これにより
+/// `policy_decision_point` の値が、この文書を取得した URL と一致する。
 pub async fn metadata(headers: HeaderMap) -> Json<AuthzenConfiguration> {
     let host = headers
         .get("host")
@@ -72,12 +79,13 @@ pub async fn metadata(headers: HeaderMap) -> Json<AuthzenConfiguration> {
     })
 }
 
-/// `GET /healthz` — liveness. Returns 200 while the process is running (§10).
+/// `GET /healthz` — liveness（生存確認）。プロセスが動いている限り 200 を返す（§10）。
 pub async fn healthz() -> StatusCode {
     StatusCode::OK
 }
 
-/// `GET /readyz` — readiness. 200 when ready, 503 when a reload has failed (§10).
+/// `GET /readyz` — readiness（受付可否）。準備完了なら 200、リロード失敗時は
+/// 503 を返す（§10）。
 pub async fn readyz(State(state): State<AppState>) -> StatusCode {
     if state.ready.load(Ordering::Relaxed) {
         StatusCode::OK
