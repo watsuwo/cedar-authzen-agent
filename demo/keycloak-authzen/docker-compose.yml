@@ -1,0 +1,53 @@
+services:
+  # AuthZEN PDP: this repo's authzen-sidecar, serving the demo Cedar ABAC
+  # policies. Built from the repo root Dockerfile (distroless runtime).
+  authzen-sidecar:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    environment:
+      # Bind on all interfaces so Keycloak can reach it over the compose network
+      # (the production sidecar binds 127.0.0.1 because it shares a netns).
+      AUTHZ_BIND: 0.0.0.0:9000
+      AUTHZ_POLICY_PATH: /policies/policies.cedar
+      AUTHZ_SCHEMA_PATH: /policies/schema.cedar.json
+      AUTHZ_POLICY_REFRESH_SECS: "15"
+      AUTHZ_LOG_FORMAT: json
+    volumes:
+      # The repo's Cedar policy + schema, mounted read-only and polled for edits.
+      - ../../policies:/policies:ro
+    ports:
+      # Host 9090 -> container 9000 (avoids clashing with the app on 9000).
+      # Keycloak reaches the PDP in-network at http://authzen-sidecar:9000.
+      - "9090:9000"
+    healthcheck:
+      # distroless image has no shell/curl; the binary's `health` subcommand
+      # probes /healthz over a raw TCP socket.
+      test: ["CMD", "/usr/local/bin/authzen-sidecar", "health"]
+      interval: 10s
+      timeout: 3s
+      retries: 3
+      start_period: 10s
+
+  # Keycloak with the AuthZEN authenticator provider and the demo realm.
+  keycloak:
+    build:
+      context: .
+      dockerfile: keycloak/Dockerfile
+    command: ["start-dev", "--import-realm"]
+    environment:
+      KC_BOOTSTRAP_ADMIN_USERNAME: admin
+      KC_BOOTSTRAP_ADMIN_PASSWORD: admin
+    ports:
+      - "8088:8080"
+    depends_on:
+      authzen-sidecar:
+        condition: service_healthy
+
+  # Landing page shown when a login is allowed (the OAuth redirect target).
+  app:
+    image: nginx:alpine
+    volumes:
+      - ./app:/usr/share/nginx/html:ro
+    ports:
+      - "9000:80"

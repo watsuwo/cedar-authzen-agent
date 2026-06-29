@@ -1,0 +1,34 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>AuthZEN demo — login allowed</title>
+  <style>
+    body { font-family: system-ui, -apple-system, "Segoe UI", sans-serif;
+           background: #0f172a; color: #e2e8f0; display: flex; min-height: 100vh;
+           align-items: center; justify-content: center; margin: 0; }
+    .card { background: #1e293b; padding: 2.5rem 3rem; border-radius: 12px;
+            box-shadow: 0 10px 40px rgba(0,0,0,.4); max-width: 560px; }
+    h1 { margin-top: 0; color: #4ade80; }
+    code { background: #334155; padding: .15rem .4rem; border-radius: 4px; }
+    p { line-height: 1.6; }
+    .muted { color: #94a3b8; font-size: .9rem; }
+  </style>
+</head>
+<body>
+  <div class="card">
+    <h1>✅ Login allowed</h1>
+    <p>
+      You reached the application redirect target, which means Keycloak completed
+      the browser login flow and the <strong>AuthZEN access evaluation</strong>
+      against <code>authzen-sidecar</code> returned <code>decision: true</code>
+      for this user and client.
+    </p>
+    <p class="muted">
+      The authorization code is in the URL query string. A denied login never
+      gets here — Keycloak shows an "access denied" error instead.
+    </p>
+  </div>
+</body>
+</html>
