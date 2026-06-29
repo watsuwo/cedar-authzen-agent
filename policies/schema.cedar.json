@@ -25,7 +25,8 @@
           "context": {
             "type": "Record",
             "attributes": {
-              "access_route": { "type": "String", "required": false }
+              "access_route": { "type": "String", "required": false },
+              "ip": { "type": "String", "required": false }
             }
           }
         }
