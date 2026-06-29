@@ -30,16 +30,16 @@ const ACTION_TYPE: &str = "Action";
 #[derive(Debug, Error)]
 pub enum ConversionError {
     /// `type`/`id`/`name` を Cedar のエンティティ uid にパースできなかった。
-    #[error("invalid entity reference: {0}")]
+    #[error("不正なエンティティ参照: {0}")]
     InvalidEntity(String),
     /// AuthZEN の `context` がスキーマ検証に失敗した。
-    #[error("invalid context: {0}")]
+    #[error("不正な context: {0}")]
     InvalidContext(String),
     /// `properties` がエンティティ属性としてのスキーマ検証に失敗した。
-    #[error("invalid properties: {0}")]
+    #[error("不正な properties: {0}")]
     InvalidProperties(String),
     /// 組み立てたリクエストがスキーマ検証に失敗した（未知のアクション・型など）。
-    #[error("invalid request: {0}")]
+    #[error("不正なリクエスト: {0}")]
     InvalidRequest(String),
 }
 
@@ -58,7 +58,7 @@ impl ConversionError {
 /// `type` + `id` のペアから Cedar のエンティティ uid を組み立てる（値はそのまま使う）。
 fn entity_uid(entity_type: &str, id: &str) -> Result<EntityUid, ConversionError> {
     let type_name = EntityTypeName::from_str(entity_type)
-        .map_err(|e| ConversionError::InvalidEntity(format!("type `{entity_type}`: {e}")))?;
+        .map_err(|e| ConversionError::InvalidEntity(format!("型 `{entity_type}`: {e}")))?;
     let entity_id = EntityId::from_str(id)
         .map_err(|e| ConversionError::InvalidEntity(format!("id `{id}`: {e}")))?;
     Ok(EntityUid::from_type_name_and_id(type_name, entity_id))
