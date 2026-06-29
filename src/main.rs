@@ -1,13 +1,14 @@
-//! AuthZEN-compliant authorization sidecar (PDP) backed by `cedar-local-agent`.
+//! AuthZEN 準拠の認可サイドカー（PDP: Policy Decision Point）。
+//! 認可判定そのものは `cedar-local-agent` に委譲する。
 //!
-//! Runs alongside Keycloak (same ECS task, localhost) and answers, during the
-//! authentication flow, whether external authentication federation must be
-//! forced for a given user + client. See `DESIGN.md`.
+//! Keycloak と同一 ECS タスク内（localhost 通信）で動作し、認証フローの最中に
+//! 「あるユーザー × クライアントの組み合わせに対して外部認証フェデレーションを
+//! 強制すべきか」を回答する。設計の詳細は `DESIGN.md` を参照。
 //!
-//! Subcommand:
-//! - `authzen-sidecar`          — run the HTTP server (default).
-//! - `authzen-sidecar health`   — probe a running server's `/healthz` and exit
-//!   0/1 (used as the container `healthCheck`, DESIGN.md §10).
+//! サブコマンド:
+//! - `authzen-sidecar`          — HTTP サーバを起動する（デフォルト）。
+//! - `authzen-sidecar health`   — 稼働中サーバの `/healthz` を叩き、0/1 で終了する。
+//!   シェルの無い distroless コンテナの `healthCheck` として利用する（DESIGN.md §10）。
 
 mod authzen;
 mod config;
@@ -67,9 +68,9 @@ fn main() -> ExitCode {
     }
 }
 
-/// Initialise tracing (incl. the OCSF authorization events emitted by the
-/// authorizer), build the authorizer over the S3 Files mount, start the policy
-/// reload task, and serve the HTTP API until SIGTERM/Ctrl-C.
+/// トレーシング（認可器が発行する OCSF 認可イベントを含む）を初期化し、S3 Files
+/// マウント上のポリシー/スキーマから認可器を構築し、ポリシーのホットリロード
+/// タスクを起動して、SIGTERM/Ctrl-C を受け取るまで HTTP API を提供する。
 async fn run_server() -> Result<(), Box<dyn Error>> {
     init_tracing();
 
@@ -79,10 +80,23 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
         cfg.bind, cfg.policy_path, cfg.schema_path, cfg.refresh
     );
 
-    // Load schema (fail-fast on malformed/missing — DESIGN.md §4 ⑤).
+    // cedar-policy の `Schema` をロードする（不正・欠損時は即時失敗 = fail-fast。
+    // DESIGN.md §4 ⑤）。`Schema` はリクエスト・ポリシー双方を strict 検証する際の
+    // 型情報そのもの。ここで一度だけ JSON からパースし、`Arc` で全ハンドラと
+    // リロードタスクに共有する。
     let schema = Arc::new(Schema::from_json_file(File::open(&cfg.schema_path)?)?);
 
-    // Policy provider over the S3 Files mount (fail-fast on malformed/missing).
+    // cedar-local-agent の `PolicySetProvider`: S3 Files マウント上のポリシー
+    // ファイルを読み込み、Cedar の `PolicySet` として保持するプロバイダ。
+    //
+    // - `Authorizer` は評価のたびにこのプロバイダから現在のポリシー集合を取得する。
+    // - `UpdateProviderData::update_provider_data()` を呼ぶとファイルを読み直し、
+    //   内部の `PolicySet` をアトミックに差し替える（後述のホットリロードの実体）。
+    // - 重要: このプロバイダが行う検証は「構文（パース）」のみ。Config にスキーマ
+    //   項目が無く、スキーマに対する型検査は行わないため、型レベルの検証は後段の
+    //   `validate_policies` で別途実施する。
+    //
+    // 構築時にファイルが不正・欠損ならエラー = 起動時 fail-fast。
     let provider = Arc::new(PolicySetProvider::new(
         policy_set_provider::ConfigBuilder::default()
             .policy_set_path(cfg.policy_path.clone())
@@ -90,15 +104,25 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
             .map_err(|e| format!("policy provider config: {e}"))?,
     )?);
 
-    // Reject policies that don't typecheck against the schema before serving
-    // (DESIGN.md §4 ⑤, §10). `PolicySetProvider` above only checks syntax;
-    // this strict validation catches references to types/attributes/actions
-    // that the schema does not define. Fail-fast at startup.
+    // スキーマに対して型検査に通らないポリシーは提供開始前に弾く
+    // （DESIGN.md §4 ⑤, §10）。上の `PolicySetProvider` は構文しか見ないため、
+    // スキーマが定義しない型・属性・アクションへの参照はこの strict 検証で初めて
+    // 捕捉できる。失敗時は起動を中止する（fail-fast）。
     validate_policies(&cfg.policy_path, &schema)
         .map_err(|e| format!("startup policy schema validation failed: {e}"))?;
 
-    // Empty entity store: identity attributes arrive per-request in
-    // `subject.properties` and are injected by the convert layer (§2.1).
+    // 認可器を構築する。`Authorizer` は cedar-local-agent の高レベル API で、
+    // 「ポリシー供給（PolicySetProvider）＋ エンティティ供給（EntityProvider）＋
+    // cedar-policy の評価エンジン」を束ねる。`is_authorized()` に AuthZEN リクエスト
+    // 由来の `Request`/`Entities` を渡すと `Decision`（Allow/Deny）を返し、同時に
+    // OCSF 形式の認可ログを自動発行する。
+    //
+    // エンティティストアは空（`EntityProvider::default()`）にする。本来 cedar-local-agent
+    // の `EntityProvider` はファイルから主体・リソースの静的属性を読み込むが、本 PDP
+    // では静的ストアを持たない。アイデンティティ属性はリクエストごとに AuthZEN の
+    // `subject.properties` として届き、convert 層が Cedar の principal エンティティ
+    // 属性として注入する（§2.1）。静的ストアを使わないことで uid 衝突が原理的に
+    // 起きない（§4 ②）。
     let authorizer: Arc<state::SidecarAuthorizer> = Arc::new(Authorizer::new(
         AuthorizerConfigBuilder::default()
             .policy_set_provider(provider.clone())
@@ -107,8 +131,8 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
             .map_err(|e| format!("authorizer config: {e}"))?,
     ));
 
-    // Readiness starts true (startup load succeeded). The reload task flips it
-    // to false if a later reload fails (DESIGN.md §10).
+    // 起動時ロードが成功したので readiness は true で開始する。以降のリロードが
+    // 失敗したときだけ、リロードタスクが false に倒す（DESIGN.md §10）。
     let ready = Arc::new(AtomicBool::new(true));
 
     spawn_reload_task(
@@ -135,6 +159,7 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
 
     let listener = tokio::net::TcpListener::bind(cfg.bind).await?;
     info!("listening on http://{}", cfg.bind);
+    // axum サーバを起動し、SIGTERM/Ctrl-C でグレースフルにシャットダウンする。
     axum::serve(listener, app)
         .with_graceful_shutdown(shutdown_signal())
         .await?;
@@ -142,15 +167,16 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
     Ok(())
 }
 
-/// Watch the policy file (over the S3 Files mount) for changes and reload,
-/// recording success/failure into `ready` so `/readyz` reflects reload health.
+/// S3 Files マウント上のポリシーファイルを監視し、変更があればリロードする。
+/// 成否を `ready` に記録するので、`/readyz` がリロードの健全性を反映する。
 ///
-/// This intentionally does not use the library's `update_provider_data_task`,
-/// which swallows the result; we need the success/failure signal (DESIGN.md §10).
+/// あえて cedar-local-agent の `update_provider_data_task` は使わない。あの
+/// ヘルパーはリロードの成否を握り潰してしまうため、本実装では成否シグナルを
+/// 取得すべく `file_inspector_task` を使った自前のループを回す（DESIGN.md §10）。
 ///
-/// Each change is schema-validated *before* the provider swaps it in, so a
-/// policy that no longer typechecks never goes live: the previous good policy
-/// keeps serving and readiness flips to false (DESIGN.md §10).
+/// 各変更はプロバイダが差し替える *前* にスキーマ検証する。型検査に通らなく
+/// なったポリシーは決して本番に出さず、直前の正常なポリシーで提供を継続しつつ
+/// readiness を false に倒す（DESIGN.md §10）。
 fn spawn_reload_task(
     provider: Arc<PolicySetProvider>,
     schema: Arc<Schema>,
@@ -158,18 +184,21 @@ fn spawn_reload_task(
     refresh: Duration,
     ready: Arc<AtomicBool>,
 ) {
+    // cedar-local-agent の `file_inspector_task`: 指定ファイルを `RefreshRate` の
+    // 間隔でポーリングし、変更を検知すると `receiver` にイベントを送るバックグラウンド
+    // タスクを起動する。返り値の `_inspector` ハンドルを保持している間だけ監視が続く。
     let (_inspector, mut receiver) =
         file_inspector_task(RefreshRate::Other(refresh), policy_path.clone());
 
     tokio::spawn(async move {
-        // Keep the inspector task alive for the lifetime of this task.
+        // 監視タスクをこの spawn の生存期間中ずっと生かしておく。
         let _inspector = _inspector;
         loop {
             match receiver.recv().await {
                 Ok(event) => {
-                    // Validate the new file against the schema before swapping
-                    // it in. On failure keep the previous policy and report
-                    // not-ready instead of serving an invalid policy.
+                    // 差し替え前に新ファイルをスキーマ検証する。失敗時は直前の
+                    // ポリシーを維持し、不正なポリシーを提供する代わりに not-ready
+                    // を報告する。
                     if let Err(error) = validate_policies(&policy_path, &schema) {
                         error!(
                             "policy reload rejected: schema validation failed \
@@ -178,6 +207,8 @@ fn spawn_reload_task(
                         ready.store(false, Ordering::Relaxed);
                         continue;
                     }
+                    // 検証を通過したので、プロバイダにファイルを読み直させ内部の
+                    // `PolicySet` を差し替える（`UpdateProviderData` トレイト）。
                     match provider.update_provider_data().await {
                         Ok(()) => {
                             info!("policy reloaded: {event:?}");
@@ -190,6 +221,7 @@ fn spawn_reload_task(
                     }
                 }
                 Err(error) => {
+                    // チャネルが閉じた = 監視タスクが終了した。ループを抜ける。
                     error!("policy reload channel closed: {error:?}");
                     break;
                 }
@@ -198,17 +230,20 @@ fn spawn_reload_task(
     });
 }
 
-/// Strictly validate the Cedar policy file at `policy_path` against `schema`.
+/// `policy_path` の Cedar ポリシーファイルを `schema` に対して strict に検証する。
 ///
-/// Returns `Err` with a human-readable summary when the policies do not
-/// typecheck (e.g. they reference an entity type, attribute or action the
-/// schema does not define). Used both at startup (fail-fast) and before each
-/// hot reload (reject the new policy, keep the previous one) — DESIGN.md §4 ⑤.
+/// 型検査に通らない場合（スキーマが定義しないエンティティ型・属性・アクションを
+/// 参照している等）に、人間可読な要約付きで `Err` を返す。起動時（fail-fast）と
+/// 各ホットリロード前（新ポリシーを却下し直前のものを維持）の両方で使う
+/// （DESIGN.md §4 ⑤）。
 fn validate_policies(policy_path: &str, schema: &Schema) -> Result<(), String> {
+    // ファイルを読み、cedar-policy の `PolicySet` としてパースする（構文検証）。
     let src = std::fs::read_to_string(policy_path)
         .map_err(|e| format!("read `{policy_path}`: {e}"))?;
     let policy_set =
         PolicySet::from_str(&src).map_err(|e| format!("parse `{policy_path}`: {e}"))?;
+    // cedar-policy の `Validator` でポリシー集合を型検査する。`ValidationMode::Strict`
+    // はスキーマに厳密一致しない参照をすべて誤りとして扱う最も厳しいモード。
     let result = Validator::new(schema.clone()).validate(&policy_set, ValidationMode::Strict);
     if result.validation_passed() {
         Ok(())
@@ -222,7 +257,8 @@ fn validate_policies(policy_path: &str, schema: &Schema) -> Result<(), String> {
     }
 }
 
-/// Configure the tracing subscriber. Honors `AUTHZ_LOG_FORMAT=json`.
+/// トレーシングサブスクライバを設定する。`AUTHZ_LOG_FORMAT=json` を尊重し、
+/// 設定時は OCSF 認可ログを含む全ログを JSON 形式で出力する。
 fn init_tracing() {
     let filter = EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info"));
     if std::env::var("AUTHZ_LOG_FORMAT").as_deref() == Ok("json") {
@@ -232,7 +268,8 @@ fn init_tracing() {
     }
 }
 
-/// Resolve when SIGTERM (unix) or Ctrl-C is received, for graceful shutdown.
+/// SIGTERM（unix）または Ctrl-C を受信したら解決する Future。グレースフル
+/// シャットダウン用に `axum::serve` へ渡す。
 async fn shutdown_signal() {
     let ctrl_c = async {
         let _ = tokio::signal::ctrl_c().await;
@@ -251,6 +288,7 @@ async fn shutdown_signal() {
     #[cfg(not(unix))]
     let terminate = std::future::pending::<()>();
 
+    // どちらかのシグナルが先に来た時点で解決する。
     tokio::select! {
         _ = ctrl_c => {}
         _ = terminate => {}
@@ -258,9 +296,9 @@ async fn shutdown_signal() {
     info!("shutdown signal received");
 }
 
-/// `health` subcommand: connect to the running server's `/healthz` and exit
-/// 0 (healthy) or 1. Uses a blocking TCP client so it works in distroless
-/// images with no shell or curl (DESIGN.md §10).
+/// `health` サブコマンド: 稼働中サーバの `/healthz` に接続し、0（健全）または 1 で
+/// 終了する。シェルや curl の無い distroless イメージでも動くよう、ブロッキングな
+/// 自前 TCP クライアントを使う（DESIGN.md §10）。
 fn health_check() -> ExitCode {
     let target = Config::health_target();
     let stream = match TcpStream::connect_timeout(&target, Duration::from_secs(2)) {

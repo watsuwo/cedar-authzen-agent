@@ -1,4 +1,4 @@
-//! Shared application state for the HTTP handlers (DESIGN.md §3, §10).
+//! HTTP ハンドラ間で共有するアプリケーション状態（DESIGN.md §3, §10）。
 
 use std::sync::atomic::AtomicBool;
 use std::sync::Arc;
@@ -8,19 +8,20 @@ use cedar_local_agent::public::file::policy_set_provider::PolicySetProvider;
 use cedar_local_agent::public::simple::Authorizer;
 use cedar_policy::Schema;
 
-/// The concrete authorizer type for this sidecar: file-backed policy provider
-/// (over the S3 Files mount) and an empty entity provider (DESIGN.md §2.1).
+/// 本サイドカーで使う `Authorizer` の具体型。ファイルバックのポリシープロバイダ
+/// （S3 Files マウント上の `PolicySetProvider`）と、空のエンティティプロバイダ
+/// （`EntityProvider`）を型引数に持つ（DESIGN.md §2.1）。
 pub type SidecarAuthorizer = Authorizer<PolicySetProvider, EntityProvider>;
 
-/// State shared across all requests (cheaply cloneable via `Arc`).
+/// 全リクエストで共有する状態（`Arc` により安価にクローンできる）。
 #[derive(Clone)]
 pub struct AppState {
-    /// The Cedar authorizer.
+    /// Cedar 認可器。
     pub authorizer: Arc<SidecarAuthorizer>,
-    /// The schema used to validate incoming requests (DESIGN.md §4 ③).
+    /// 受信リクエストの検証に使うスキーマ（DESIGN.md §4 ③）。
     pub schema: Arc<Schema>,
-    /// Readiness flag: `true` once the initial load succeeded and the most
-    /// recent reload (if any) also succeeded. Flipped to `false` on a failed
-    /// reload so `/readyz` returns 503 (DESIGN.md §10).
+    /// readiness フラグ。初回ロードが成功し、かつ直近のリロード（あれば）も成功
+    /// していれば `true`。リロード失敗時に `false` へ倒され、`/readyz` が 503 を
+    /// 返すようになる（DESIGN.md §10）。
     pub ready: Arc<AtomicBool>,
 }

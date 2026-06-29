@@ -1,41 +1,42 @@
-//! Runtime configuration, loaded from environment variables (DESIGN.md §6).
+//! 環境変数から読み込むランタイム設定（DESIGN.md §6）。
 
 use std::net::SocketAddr;
 use std::time::Duration;
 
 use thiserror::Error;
 
-/// Minimum policy refresh interval enforced by the library guidance (>= 15s).
+/// ライブラリ（cedar-local-agent）の指針で推奨される、ポリシー更新間隔の最小値
+/// （15 秒以上）。これより短い値が指定されても 15 秒に切り上げる。
 const MIN_REFRESH_SECS: u64 = 15;
 
-/// Sidecar configuration resolved from the environment.
+/// 環境から解決したサイドカーの設定。
 #[derive(Debug, Clone)]
 pub struct Config {
-    /// Address to bind the HTTP server to (`AUTHZ_BIND`).
+    /// HTTP サーバをバインドするアドレス（`AUTHZ_BIND`）。
     pub bind: SocketAddr,
-    /// Path to the Cedar policy file on the S3 Files mount (`AUTHZ_POLICY_PATH`).
+    /// S3 Files マウント上の Cedar ポリシーファイルのパス（`AUTHZ_POLICY_PATH`）。
     pub policy_path: String,
-    /// Path to the Cedar schema (JSON) on the S3 Files mount (`AUTHZ_SCHEMA_PATH`).
+    /// S3 Files マウント上の Cedar スキーマ（JSON）のパス（`AUTHZ_SCHEMA_PATH`）。
     pub schema_path: String,
-    /// Polling interval for detecting policy file changes (`AUTHZ_POLICY_REFRESH_SECS`).
+    /// ポリシーファイル変更検知のためのポーリング間隔（`AUTHZ_POLICY_REFRESH_SECS`）。
     pub refresh: Duration,
-    /// Maximum request body size in bytes (`AUTHZ_REQUEST_BODY_LIMIT`).
+    /// リクエストボディの最大サイズ（バイト, `AUTHZ_REQUEST_BODY_LIMIT`）。
     pub body_limit: usize,
 }
 
-/// Errors raised while loading configuration.
+/// 設定読み込み中に生じるエラー。
 #[derive(Debug, Error)]
 pub enum ConfigError {
-    /// A required environment variable was not set.
+    /// 必須の環境変数が設定されていない。
     #[error("missing required environment variable: {0}")]
     Missing(&'static str),
-    /// An environment variable held an unparseable value.
+    /// 環境変数の値をパースできなかった。
     #[error("invalid value for {0}: {1}")]
     Invalid(&'static str, String),
 }
 
 impl Config {
-    /// Load configuration from the process environment, applying defaults.
+    /// プロセスの環境から設定を読み込み、デフォルトを適用する。
     pub fn from_env() -> Result<Self, ConfigError> {
         let bind = env_or("AUTHZ_BIND", "127.0.0.1:9000");
         let bind: SocketAddr = bind
@@ -63,10 +64,10 @@ impl Config {
         })
     }
 
-    /// Resolve the address the `health` subcommand should connect to.
+    /// `health` サブコマンドが接続すべきアドレスを解決する。
     ///
-    /// Reads only `AUTHZ_BIND`; if the bind host is unspecified (`0.0.0.0`),
-    /// connect over loopback instead.
+    /// `AUTHZ_BIND` のみを読む。バインドホストが未指定（`0.0.0.0`）の場合は、
+    /// 代わりにループバック宛てに接続する。
     pub fn health_target() -> SocketAddr {
         let bind = env_or("AUTHZ_BIND", "127.0.0.1:9000");
         let addr: SocketAddr = bind.parse().unwrap_or_else(|_| {
