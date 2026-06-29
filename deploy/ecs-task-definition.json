@@ -1,0 +1,82 @@
+{
+  "family": "keycloak-with-authz-sidecar",
+  "networkMode": "awsvpc",
+  "requiresCompatibilities": ["FARGATE"],
+  "cpu": "1024",
+  "memory": "2048",
+  "executionRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/ecsTaskExecutionRole",
+  "taskRoleArn": "arn:aws:iam::<ACCOUNT_ID>:role/authzSidecarTaskRole",
+
+  "volumes": [
+    {
+      "name": "policy-store",
+      "s3filesVolumeConfiguration": {
+        "fileSystemArn": "arn:aws:s3files:<REGION>:<ACCOUNT_ID>:file-system/fs-xxxxxxxx",
+        "rootDirectory": "/",
+        "accessPointArn": "arn:aws:s3files:<REGION>:<ACCOUNT_ID>:access-point/fsap-xxxxxxxx"
+      }
+    }
+  ],
+
+  "containerDefinitions": [
+    {
+      "name": "authz-sidecar",
+      "image": "<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/authzen-sidecar:0.1.0",
+      "essential": true,
+      "readonlyRootFilesystem": true,
+      "mountPoints": [
+        {
+          "sourceVolume": "policy-store",
+          "containerPath": "/mnt/s3files",
+          "readOnly": true
+        }
+      ],
+      "environment": [
+        { "name": "AUTHZ_BIND", "value": "127.0.0.1:9000" },
+        { "name": "AUTHZ_POLICY_PATH", "value": "/mnt/s3files/policies.cedar" },
+        { "name": "AUTHZ_SCHEMA_PATH", "value": "/mnt/s3files/schema.cedar.json" },
+        { "name": "AUTHZ_POLICY_REFRESH_SECS", "value": "30" },
+        { "name": "AUTHZ_LOG_FORMAT", "value": "json" }
+      ],
+      "healthCheck": {
+        "command": ["CMD", "/usr/local/bin/authzen-sidecar", "health"],
+        "interval": 10,
+        "timeout": 3,
+        "retries": 3,
+        "startPeriod": 10
+      },
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/keycloak-with-authz-sidecar",
+          "awslogs-region": "<REGION>",
+          "awslogs-stream-prefix": "authz-sidecar"
+        }
+      }
+    },
+    {
+      "name": "keycloak",
+      "image": "quay.io/keycloak/keycloak:26.0",
+      "essential": true,
+      "command": ["start"],
+      "dependsOn": [
+        { "containerName": "authz-sidecar", "condition": "HEALTHY" }
+      ],
+      "portMappings": [
+        { "containerPort": 8080, "protocol": "tcp" }
+      ],
+      "environment": [
+        { "name": "KC_HEALTH_ENABLED", "value": "true" },
+        { "name": "KC_PROXY_HEADERS", "value": "xforwarded" }
+      ],
+      "logConfiguration": {
+        "logDriver": "awslogs",
+        "options": {
+          "awslogs-group": "/ecs/keycloak-with-authz-sidecar",
+          "awslogs-region": "<REGION>",
+          "awslogs-stream-prefix": "keycloak"
+        }
+      }
+    }
+  ]
+}

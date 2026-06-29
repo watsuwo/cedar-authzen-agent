@@ -1,0 +1,35 @@
+{
+  "": {
+    "entityTypes": {
+      "User": {
+        "shape": {
+          "type": "Record",
+          "attributes": {
+            "user_type": { "type": "String", "required": false },
+            "department": { "type": "String", "required": false }
+          }
+        }
+      },
+      "Client": {
+        "shape": {
+          "type": "Record",
+          "attributes": {}
+        }
+      }
+    },
+    "actions": {
+      "login": {
+        "appliesTo": {
+          "principalTypes": ["User"],
+          "resourceTypes": ["Client"],
+          "context": {
+            "type": "Record",
+            "attributes": {
+              "access_route": { "type": "String", "required": false }
+            }
+          }
+        }
+      }
+    }
+  }
+}
