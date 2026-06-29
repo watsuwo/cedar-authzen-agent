@@ -20,6 +20,7 @@ use std::fs::File;
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::ExitCode;
+use std::str::FromStr;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
@@ -35,7 +36,7 @@ use cedar_local_agent::public::file::entity_provider::EntityProvider;
 use cedar_local_agent::public::file::policy_set_provider::{self, PolicySetProvider};
 use cedar_local_agent::public::simple::{Authorizer, AuthorizerConfigBuilder};
 use cedar_local_agent::public::UpdateProviderData;
-use cedar_policy::Schema;
+use cedar_policy::{PolicySet, Schema, ValidationMode, Validator};
 
 use crate::config::Config;
 use crate::state::AppState;
@@ -89,6 +90,13 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
             .map_err(|e| format!("policy provider config: {e}"))?,
     )?);
 
+    // Reject policies that don't typecheck against the schema before serving
+    // (DESIGN.md §4 ⑤, §10). `PolicySetProvider` above only checks syntax;
+    // this strict validation catches references to types/attributes/actions
+    // that the schema does not define. Fail-fast at startup.
+    validate_policies(&cfg.policy_path, &schema)
+        .map_err(|e| format!("startup policy schema validation failed: {e}"))?;
+
     // Empty entity store: identity attributes arrive per-request in
     // `subject.properties` and are injected by the convert layer (§2.1).
     let authorizer: Arc<state::SidecarAuthorizer> = Arc::new(Authorizer::new(
@@ -103,7 +111,13 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
     // to false if a later reload fails (DESIGN.md §10).
     let ready = Arc::new(AtomicBool::new(true));
 
-    spawn_reload_task(provider.clone(), cfg.policy_path.clone(), cfg.refresh, ready.clone());
+    spawn_reload_task(
+        provider.clone(),
+        schema.clone(),
+        cfg.policy_path.clone(),
+        cfg.refresh,
+        ready.clone(),
+    );
 
     let state = AppState {
         authorizer,
@@ -133,30 +147,48 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
 ///
 /// This intentionally does not use the library's `update_provider_data_task`,
 /// which swallows the result; we need the success/failure signal (DESIGN.md §10).
+///
+/// Each change is schema-validated *before* the provider swaps it in, so a
+/// policy that no longer typechecks never goes live: the previous good policy
+/// keeps serving and readiness flips to false (DESIGN.md §10).
 fn spawn_reload_task(
     provider: Arc<PolicySetProvider>,
+    schema: Arc<Schema>,
     policy_path: String,
     refresh: Duration,
     ready: Arc<AtomicBool>,
 ) {
     let (_inspector, mut receiver) =
-        file_inspector_task(RefreshRate::Other(refresh), policy_path);
+        file_inspector_task(RefreshRate::Other(refresh), policy_path.clone());
 
     tokio::spawn(async move {
         // Keep the inspector task alive for the lifetime of this task.
         let _inspector = _inspector;
         loop {
             match receiver.recv().await {
-                Ok(event) => match provider.update_provider_data().await {
-                    Ok(()) => {
-                        info!("policy reloaded: {event:?}");
-                        ready.store(true, Ordering::Relaxed);
-                    }
-                    Err(error) => {
-                        error!("policy reload failed (serving previous policy): {error:?}");
+                Ok(event) => {
+                    // Validate the new file against the schema before swapping
+                    // it in. On failure keep the previous policy and report
+                    // not-ready instead of serving an invalid policy.
+                    if let Err(error) = validate_policies(&policy_path, &schema) {
+                        error!(
+                            "policy reload rejected: schema validation failed \
+                             ({error}); serving previous policy"
+                        );
                         ready.store(false, Ordering::Relaxed);
+                        continue;
                     }
-                },
+                    match provider.update_provider_data().await {
+                        Ok(()) => {
+                            info!("policy reloaded: {event:?}");
+                            ready.store(true, Ordering::Relaxed);
+                        }
+                        Err(error) => {
+                            error!("policy reload failed (serving previous policy): {error:?}");
+                            ready.store(false, Ordering::Relaxed);
+                        }
+                    }
+                }
                 Err(error) => {
                     error!("policy reload channel closed: {error:?}");
                     break;
@@ -164,6 +196,30 @@ fn spawn_reload_task(
             }
         }
     });
+}
+
+/// Strictly validate the Cedar policy file at `policy_path` against `schema`.
+///
+/// Returns `Err` with a human-readable summary when the policies do not
+/// typecheck (e.g. they reference an entity type, attribute or action the
+/// schema does not define). Used both at startup (fail-fast) and before each
+/// hot reload (reject the new policy, keep the previous one) — DESIGN.md §4 ⑤.
+fn validate_policies(policy_path: &str, schema: &Schema) -> Result<(), String> {
+    let src = std::fs::read_to_string(policy_path)
+        .map_err(|e| format!("read `{policy_path}`: {e}"))?;
+    let policy_set =
+        PolicySet::from_str(&src).map_err(|e| format!("parse `{policy_path}`: {e}"))?;
+    let result = Validator::new(schema.clone()).validate(&policy_set, ValidationMode::Strict);
+    if result.validation_passed() {
+        Ok(())
+    } else {
+        let errors = result
+            .validation_errors()
+            .map(|error| error.to_string())
+            .collect::<Vec<_>>()
+            .join("; ");
+        Err(errors)
+    }
 }
 
 /// Configure the tracing subscriber. Honors `AUTHZ_LOG_FORMAT=json`.
