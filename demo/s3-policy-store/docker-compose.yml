@@ -1,0 +1,111 @@
+# ローカルで「S3 をポリシーストアにする」構成を再現するデモ。
+#
+# 本番（DESIGN.md §5）は Amazon S3 + S3 Files（バケットを NFS でマウントする
+# マネージドサービス）で、PDP は常駐ファイルを普通に read し、更新は
+# 「PutObject → S3 Files がファイルを更新 → file_inspector_task が検知 → reload」
+# という流れ。PDP 自体はストレージ非依存（ただのファイルパス）。
+#
+# ローカルでは FUSE 権限なしで同じ振る舞いを再現するため、次の3つで構成する:
+#   1) minio            … ローカルの S3 互換オブジェクトストア（= S3 の代役）
+#   2) policy-projector … バケットを共有ボリュームのファイルへ射影（= S3 Files の代役）
+#   3) authzen-sidecar  … 射影されたファイルを読む PDP（本番と同じバイナリ・同じ設定）
+#
+# これで「MinIO にポリシーを put → ファイルへ射影 → PDP がホットリロード」を実演できる。
+# 詳細・手順は README.md を参照。
+
+name: authzen-s3-store
+
+services:
+  # 1) ローカル S3 互換ストア（本番の S3 バケットに相当）
+  minio:
+    image: minio/minio:latest
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: minioadmin
+      MINIO_ROOT_PASSWORD: minioadmin
+    ports:
+      - "9101:9000"   # S3 API（ホストから aws/mc で触る場合用）
+      - "9001:9001"   # Web コンソール（http://localhost:9001 minioadmin/minioadmin）
+    volumes:
+      - minio-data:/data
+
+  # 2) 初期セットアップ（一度だけ実行）: バケット作成・バージョニング有効化・初期ポリシー投入。
+  #    DESIGN.md §5.1 の「S3 Versioning 必須」をローカルでも踏襲する。
+  minio-setup:
+    image: minio/mc:latest
+    depends_on:
+      - minio
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        set -e
+        echo 'waiting for minio...'
+        until mc alias set local http://minio:9000 minioadmin minioadmin >/dev/null 2>&1; do
+          sleep 1
+        done
+        mc mb --ignore-existing local/authzen-policies
+        mc version enable local/authzen-policies
+        mc cp /seed/policies.cedar    local/authzen-policies/policies.cedar
+        mc cp /seed/schema.cedar.json local/authzen-policies/schema.cedar.json
+        echo 'seed upload done'
+    volumes:
+      # リポジトリの policies/ を初期データとして投入する。
+      - ../../policies:/seed:ro
+
+  # 3) 射影プロセス（S3 Files の代役）: バケットを共有ボリュームへミラーし、
+  #    以降は --watch で更新を常駐ファイルへ反映し続ける。
+  #    healthcheck が通る = 初期ミラーが終わってファイルが揃った、を意味する。
+  policy-projector:
+    image: minio/mc:latest
+    depends_on:
+      minio-setup:
+        condition: service_completed_successfully
+    entrypoint: ["/bin/sh", "-c"]
+    command:
+      - |
+        until mc alias set local http://minio:9000 minioadmin minioadmin >/dev/null 2>&1; do
+          sleep 1
+        done
+        # 初期フルミラー → 以降は更新を監視して射影し続ける（S3 → ファイル）。
+        mc mirror --overwrite --watch local/authzen-policies /policystore
+    volumes:
+      - policy-store:/policystore
+    healthcheck:
+      test:
+        - "CMD-SHELL"
+        - "test -f /policystore/policies.cedar && test -f /policystore/schema.cedar.json"
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  # 4) PDP 本体。本番と同じイメージ・同じ env。違いは「読むファイルが S3 射影先」だけ。
+  authzen-sidecar:
+    build:
+      context: ../../
+      dockerfile: Dockerfile
+    depends_on:
+      policy-projector:
+        condition: service_healthy
+    environment:
+      AUTHZ_BIND: 0.0.0.0:9000
+      AUTHZ_POLICY_PATH: /policystore/policies.cedar
+      AUTHZ_SCHEMA_PATH: /policystore/schema.cedar.json
+      AUTHZ_POLICY_REFRESH_SECS: "15"   # ローカルの最小許容値（DESIGN.md §6）
+      RUST_LOG: "info,cedar_local_agent=warn"
+      AUTHZ_LOG_FORMAT: json
+    volumes:
+      # 射影先は read-only でマウント（PDP は書き込まない＝本番の read 専用と同じ）。
+      - policy-store:/policystore:ro
+    ports:
+      - "9090:9000"
+    restart: unless-stopped
+    healthcheck:
+      # distroless のためシェル/curl が無い。バイナリの health サブコマンドで /healthz を叩く。
+      test: ["CMD", "/usr/local/bin/authzen-sidecar", "health"]
+      interval: 10s
+      timeout: 3s
+      retries: 5
+
+volumes:
+  minio-data:   # MinIO のオブジェクト実体（= S3 バケットのストレージ）
+  policy-store: # 射影先の常駐ファイル（= S3 Files マウントの代役）。projector(rw) と PDP(ro) で共有

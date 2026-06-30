@@ -305,6 +305,18 @@ S3 用のカスタム Provider や `aws-sdk-s3` 依存は**不要**。
 - **権限**: ポリシー読取はファイルシステム経由のため、アプリ側に `s3:GetObject` の IAM は不要。
   S3 Files のマウント/アクセスポイント権限と、リンク先バケットの Versioning 有効化が前提。
 
+### 5.4 ローカルでの再現（dev）
+
+PDP はストレージ非依存（ただのファイルパスを read）なので、本番の S3 ポリシーストアは
+**FUSE もクラウドも使わず**ローカル再現できる。`demo/s3-policy-store/`（docker compose）で:
+
+- **MinIO** = S3 バケットの代役（Versioning 有効化）。
+- **`mc mirror --watch`** の射影プロセス = S3 Files（バケット → 常駐ファイルへの射影）の代役。
+- **authzen-sidecar** は本番と同一バイナリ・同一 env で、射影先ファイルを read するだけ。
+
+「MinIO に PutObject → 射影 → `file_inspector_task` が検知 → ホットリロード」という本番と
+同じ更新フローを実演できる（手順は同ディレクトリの README）。
+
 ---
 
 ## 6. 設定（環境変数）
