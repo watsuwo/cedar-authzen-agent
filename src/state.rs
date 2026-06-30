@@ -18,6 +18,10 @@ pub type SidecarAuthorizer = Authorizer<PolicySetProvider, EntityProvider>;
 pub struct AppState {
     /// Cedar 認可器。
     pub authorizer: Arc<SidecarAuthorizer>,
+    /// ポリシープロバイダ。判定ログで「効いたポリシー」の `@id` アノテーションを
+    /// 解決する（`reason()` が返す内部 `PolicyId` を人間可読名に変換する）ために
+    /// 認可器とは別に保持する。
+    pub provider: Arc<PolicySetProvider>,
     /// 受信リクエストの検証に使うスキーマ（DESIGN.md §4 ③）。
     pub schema: Arc<Schema>,
     /// readiness フラグ。初回ロードが成功し、かつ直近のリロード（あれば）も成功

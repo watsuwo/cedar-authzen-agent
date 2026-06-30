@@ -108,8 +108,9 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
     // （DESIGN.md §4 ⑤, §10）。上の `PolicySetProvider` は構文しか見ないため、
     // スキーマが定義しない型・属性・アクションへの参照はこの strict 検証で初めて
     // 捕捉できる。失敗時は起動を中止する（fail-fast）。
-    validate_policies(&cfg.policy_path, &schema)
+    let policy_count = validate_policies(&cfg.policy_path, &schema)
         .map_err(|e| format!("startup policy schema validation failed: {e}"))?;
+    info!("loaded and validated policy set: {policy_count} policies");
 
     // 認可器を構築する。`Authorizer` は cedar-local-agent の高レベル API で、
     // 「ポリシー供給（PolicySetProvider）＋ エンティティ供給（EntityProvider）＋
@@ -145,6 +146,7 @@ async fn run_server() -> Result<(), Box<dyn Error>> {
 
     let state = AppState {
         authorizer,
+        provider,
         schema,
         ready,
     };
@@ -199,19 +201,22 @@ fn spawn_reload_task(
                     // 差し替え前に新ファイルをスキーマ検証する。失敗時は直前の
                     // ポリシーを維持し、不正なポリシーを提供する代わりに not-ready
                     // を報告する。
-                    if let Err(error) = validate_policies(&policy_path, &schema) {
-                        error!(
-                            "policy reload rejected: schema validation failed \
-                             ({error}); serving previous policy"
-                        );
-                        ready.store(false, Ordering::Relaxed);
-                        continue;
-                    }
+                    let policy_count = match validate_policies(&policy_path, &schema) {
+                        Ok(count) => count,
+                        Err(error) => {
+                            error!(
+                                "policy reload rejected: schema validation failed \
+                                 ({error}); serving previous policy"
+                            );
+                            ready.store(false, Ordering::Relaxed);
+                            continue;
+                        }
+                    };
                     // 検証を通過したので、プロバイダにファイルを読み直させ内部の
                     // `PolicySet` を差し替える（`UpdateProviderData` トレイト）。
                     match provider.update_provider_data().await {
                         Ok(()) => {
-                            info!("policy reloaded: {event:?}");
+                            info!("policy reloaded: {policy_count} policies ({event:?})");
                             ready.store(true, Ordering::Relaxed);
                         }
                         Err(error) => {
@@ -233,10 +238,11 @@ fn spawn_reload_task(
 /// `policy_path` の Cedar ポリシーファイルを `schema` に対して strict に検証する。
 ///
 /// 型検査に通らない場合（スキーマが定義しないエンティティ型・属性・アクションを
-/// 参照している等）に、人間可読な要約付きで `Err` を返す。起動時（fail-fast）と
-/// 各ホットリロード前（新ポリシーを却下し直前のものを維持）の両方で使う
-/// （DESIGN.md §4 ⑤）。
-fn validate_policies(policy_path: &str, schema: &Schema) -> Result<(), String> {
+/// 参照している等）に、人間可読な要約付きで `Err` を返す。合格時はポリシー文の
+/// 件数を返す（起動・リロードログで「何件読み込んだか」を示すため）。起動時
+/// （fail-fast）と各ホットリロード前（新ポリシーを却下し直前のものを維持）の
+/// 両方で使う（DESIGN.md §4 ⑤）。
+fn validate_policies(policy_path: &str, schema: &Schema) -> Result<usize, String> {
     // ファイルを読み、cedar-policy の `PolicySet` としてパースする（構文検証）。
     let src = std::fs::read_to_string(policy_path)
         .map_err(|e| format!("read `{policy_path}`: {e}"))?;
@@ -246,7 +252,7 @@ fn validate_policies(policy_path: &str, schema: &Schema) -> Result<(), String> {
     // はスキーマに厳密一致しない参照をすべて誤りとして扱う最も厳しいモード。
     let result = Validator::new(schema.clone()).validate(&policy_set, ValidationMode::Strict);
     if result.validation_passed() {
-        Ok(())
+        Ok(policy_set.policies().count())
     } else {
         let errors = result
             .validation_errors()
