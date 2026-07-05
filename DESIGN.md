@@ -57,7 +57,7 @@ AuthZEN HTTP API 経由で認可判定（PDP）を返す。
 |---|---|---|
 | `subject.type`+`id` | `principal = User::"<sub>"` | Keycloak: `sub` / `preferred_username` |
 | `subject.properties` | principal エンティティ属性（ABAC） | `user_type`, `department` 等 |
-| `action.name` | `action = Action::"login"` | 固定（問い合わせ＝ログイン可否） |
+| `action.name` | `action = Action::"<name>"` | schema 定義の action（例: `login` / `requireMfa`） |
 | `resource.type`+`id` | `resource = Client::"<clientId>"` | Keycloak: 認証中の client |
 | `context` | Cedar `Context` | 環境属性 `access_route` 等 |
 
@@ -78,9 +78,11 @@ AuthZEN HTTP API 経由で認可判定（PDP）を返す。
   - 規約は **Deny=強制 に確定**（2026-06-30）。Keycloak 側の分岐実装もこれに合わせる
     （初版の暫定案 `Allow=強制` を反転したもの）。
 - **クライアント毎ポリシー**: `resource == Client::"<clientId>"` で条件化（§2.3, §5.2 案1）。
-- **アクションは拡張可能**: 当面 `login` の1種だが、**許可アクション集合は schema で定義**するため
-  `requireMfa` 等の追加は schema＋ポリシー更新で済み、コード変更は不要。convert/検証はアクションを
-  ハードコードせず schema 由来の集合で判定する。
+- **アクションは拡張可能**: **許可アクション集合は schema で定義**するため、action の追加は
+  schema＋ポリシー更新で済み、コード変更は不要（convert/検証はアクションをハードコードせず
+  schema 由来の集合で判定する）。実際 `requireMfa`（step-up MFA の強制）はこの手順だけで追加した
+  2 つ目の action で、`login` と同じ「強制系」ファミリ（Deny=追加の強制）に属する。ファミリ・
+  効果の向き・`step_up` 値の規約は [`policies/README.md`](./policies/README.md) §2 を参照。
 
 ### 2.2 リクエスト/レスポンス例
 

@@ -36,3 +36,33 @@ when {
   principal has user_type && principal.user_type == "partner" &&
   context has access_route && context.access_route == "internal"
 };
+
+// -- requireMfa: step-up MFA enforcement -------------------------------------
+//
+// Same "enforcement family" as `login` (see ./README.md §2): baseline `permit`
+// plus condition-specific `forbid` overrides, and `decision: false` is the
+// "something extra happens" side.
+//   Allow (permit, no forbid matches) = step-up MFA NOT required.
+//   Deny  (a forbid matches)          = step-up MFA is REQUIRED.
+// `@decision_context_step_up("mfa")` tells the PEP which mechanism to invoke
+// (contrast `login`'s "external-auth"), so the same PEP field routes to the
+// right flow per action.
+
+@id("allow-no-mfa")
+@description("Baseline for requireMfa: do not require step-up MFA. forbid rules below override this to require MFA for risky conditions.")
+permit(principal, action == Action::"requireMfa", resource);
+
+// Require step-up MFA for privileged-department employees on any client, unless
+// they already reached a strong authentication level (authn_level "aal2").
+@id("require-mfa-privileged")
+@description("requireMfa: require step-up MFA for dept A* employees on any client, unless they already reached authn_level aal2. Protects privileged-department sessions with a second factor without re-prompting users who already stepped up.")
+@decision_context_reason_user("Additional verification is required to continue.")
+@decision_context_step_up("mfa")
+forbid(principal, action == Action::"requireMfa", resource)
+when {
+  principal has user_type && principal.user_type == "employee" &&
+  principal has department && principal.department like "A*"
+}
+unless {
+  context has authn_level && context.authn_level == "aal2"
+};

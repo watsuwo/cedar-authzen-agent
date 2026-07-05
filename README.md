@@ -12,10 +12,21 @@ See [`DESIGN.md`](./DESIGN.md) for the full design.
 
 ## Decision contract
 
-`POST /access/v1/evaluation` with action `login`:
+`POST /access/v1/evaluation`. What a decision *means* depends on the action
+(both actions below are the "enforcement family": `decision: false` is the
+"force something extra" side). Adding actions is schema + policy only, no code
+change — see [`policies/README.md`](./policies/README.md).
+
+Action `login`:
 
 - `decision: true` — Cedar **Allow** → normal login permitted (external auth **not** forced).
 - `decision: false` — Cedar **Deny** (a `forbid` matched) → external auth **forced**.
+
+Action `requireMfa`:
+
+- `decision: true` — Cedar **Allow** → step-up MFA **not** required.
+- `decision: false` — Cedar **Deny** (a `forbid` matched) → step-up MFA **required**
+  (the mechanism to invoke is returned in `context.step_up`, e.g. `mfa`).
 
 ### Response `context` from policy annotations
 

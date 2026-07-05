@@ -30,6 +30,19 @@
             }
           }
         }
+      },
+      "requireMfa": {
+        "appliesTo": {
+          "principalTypes": ["User"],
+          "resourceTypes": ["Client"],
+          "context": {
+            "type": "Record",
+            "attributes": {
+              "access_route": { "type": "String", "required": false },
+              "authn_level": { "type": "String", "required": false }
+            }
+          }
+        }
       }
     }
   }
