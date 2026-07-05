@@ -17,6 +17,15 @@ See [`DESIGN.md`](./DESIGN.md) for the full design.
 - `decision: true` — Cedar **Allow** → normal login permitted (external auth **not** forced).
 - `decision: false` — Cedar **Deny** (a `forbid` matched) → external auth **forced**.
 
+### Response `context` from policy annotations
+
+`@decision_context_<key>("value")` annotations on the policies that determined the
+decision are returned as `context.<key> = "value"` in the response, letting
+policies tell the PEP *why* (e.g. `reason_user`) or *what to do next*
+(e.g. `step_up`). Other annotations such as `@id` are never exposed; if no
+`@decision_context_*` annotation applies, the `context` field is omitted.
+See [`DESIGN.md`](./DESIGN.md) §2.2 for the mapping rules.
+
 ## Endpoints
 
 | Method | Path | Purpose |
@@ -64,7 +73,7 @@ curl -s localhost:9000/access/v1/evaluation \
     "resource": { "type": "Client", "id": "a-client" },
     "context":  { "access_route": "internet" }
   }'
-# => {"decision":false}
+# => {"decision":false,"context":{"reason_user":"External authentication is required for this access route.","step_up":"external-auth"}}
 ```
 
 ## Health subcommand
