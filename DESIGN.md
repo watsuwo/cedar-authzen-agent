@@ -99,6 +99,42 @@ POST /access/v1/evaluation
 { "decision": false }   // a-client-deny に一致 → Deny = 外部認証連携を強制
 ```
 
+#### レスポンス `context`（アノテーションマッピング）
+
+AuthZEN のレスポンスは `decision` に加えて任意の JSON オブジェクト `context` を返せる。
+本 PDP は、**判定を決めたポリシー**（Cedar の `diagnostics().reason()`）に付いた
+`@decision_context_<key>("value")` アノテーションを `context.<key> = "value"` にマッピングして返す。
+PEP（Keycloak authenticator 等）へ「なぜ拒否されたか」「どの追加認証を要求すべきか」を
+ポリシー側から伝えるための仕組み。
+
+```cedar
+@id("a-client-deny")
+@decision_context_reason_user("追加認証が必要です")
+@decision_context_step_up("external-auth")
+forbid(principal, action == Action::"login", resource == Client::"a-client")
+when { ... };
+```
+
+```json
+{
+  "decision": false,
+  "context": { "reason_user": "追加認証が必要です", "step_up": "external-auth" }
+}
+```
+
+マッピング規約:
+
+- 対象は `decision_context_` プレフィックス付きアノテーションのみ。`@id` など他のアノテーションは
+  レスポンスに漏らさない。値は Cedar アノテーションの制約上、常に文字列。
+- 対象ポリシーは determining policies のみ。default-deny（`forbid` 不一致の拒否）では
+  `reason()` が空になるため `context` は付かない。`permit`/`forbid` どちらの
+  アノテーションも対象（`decision: true` でも返しうる）。
+- 複数の determining policies に同じキーがある場合は、ポリシー id の文字列順で
+  **先勝ち**（衝突は warn ログに記録）。
+- 該当アノテーションが 1 つもなければ `context` フィールド自体を省略する。
+- PDP が組み込みで付与するフィールドはない。`context` の内容はポリシー作者が
+  明示したものだけで構成される（内部情報の漏洩を最小化）。
+
 ### 2.3 ポリシー例（外部認証連携の強制）
 
 「外部認証連携を強制するか」は `Action::"login"` への `permit`/`forbid` で表現する。基底の

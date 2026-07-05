@@ -86,10 +86,11 @@ pub async fn evaluate(
     // Cedar の `Allow` を `decision: true`（通常ログイン許可）に対応づける。
     let allowed = response.decision() == Decision::Allow;
 
-    // 判定理由となったポリシー id（どの forbid/permit が効いたかの追跡用）。
-    // `reason()` は Cedar 内部 id（policy0 等）を返すため、可能なら現在の
-    // ポリシー集合から `@id` アノテーション（例: "a-client-deny"）に解決して
-    // 運用で読みやすくする。解決できなければ内部 id をそのまま使う。
+    // 判定理由となったポリシー id（どの forbid/permit が効いたかの追跡用と、
+    // レスポンス `context` の組み立て用）。`reason()` は Cedar 内部 id（policy0 等）
+    // を返すため、ログでは可能なら現在のポリシー集合から `@id` アノテーション
+    // （例: "a-client-deny"）に解決して運用で読みやすくする。解決できなければ
+    // 内部 id をそのまま使う。
     let reason_ids: Vec<_> = response.diagnostics().reason().collect();
     let policy_set = state.provider.get_policy_set(&cedar_request).await.ok();
     let determining_policies = reason_ids
@@ -119,6 +120,12 @@ pub async fn evaluate(
         );
     }
 
+    // 判定を決めたポリシーの `@decision_context_<key>` アノテーションをレスポンスの
+    // `context` に載せる（DESIGN.md §2.2）。該当がなければ `context` は省略。
+    let context = policy_set
+        .as_ref()
+        .and_then(|ps| convert::to_authzen_context(ps, &reason_ids));
+
     // 1 リクエスト = 1 行の判定ログ。ログイン可否監査の中核。
     info!(
         %subject, %action, %resource,
@@ -129,7 +136,7 @@ pub async fn evaluate(
         "access evaluation completed"
     );
 
-    Ok(Json(EvaluationResponse::new(allowed)))
+    Ok(Json(EvaluationResponse::new(allowed).with_context(context)))
 }
 
 /// `GET /.well-known/authzen-configuration` — PDP のディスカバリメタデータ（§2）。

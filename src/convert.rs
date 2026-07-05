@@ -9,18 +9,29 @@
 //!
 //! 全入力を Cedar の [`Schema`] に対して検証する。未知の型・アクション・属性は
 //! 拒否し、呼び出し側（ハンドラ）が HTTP 400 にマッピングする。
+//!
+//! 逆方向（Cedar -> AuthZEN）として、判定を決めたポリシーの `@decision_context_<key>`
+//! アノテーションをレスポンスの `context` オブジェクトへ変換する
+//! [`to_authzen_context`] も提供する（DESIGN.md §2.2）。
 
 use std::str::FromStr;
 
-use cedar_policy::{Context, Entities, EntityId, EntityTypeName, EntityUid, Request, Schema};
+use cedar_policy::{
+    Context, Entities, EntityId, EntityTypeName, EntityUid, PolicyId, PolicySet, Request, Schema,
+};
 use serde_json::{json, Map, Value};
 use thiserror::Error;
+use tracing::warn;
 
 use crate::authzen::EvaluationRequest;
 
 /// AuthZEN のアクションに用いる Cedar エンティティ型（Cedar ではアクションは
 /// 必ず `Action::"<name>"` という固定の型を持つ）。
 const ACTION_TYPE: &str = "Action";
+
+/// レスポンス `context` へマッピングするアノテーションキーのプレフィックス。
+/// `@decision_context_<key>("value")` が `context.<key> = "value"` になる。
+const CONTEXT_ANNOTATION_PREFIX: &str = "decision_context_";
 
 /// AuthZEN リクエストを Cedar 入力へ変換する過程で生じるエラー。
 ///
@@ -126,4 +137,166 @@ pub fn to_cedar(
         .map_err(|e| ConversionError::Properties(e.to_string()))?;
 
     Ok((request, entities))
+}
+
+/// 判定を決めたポリシー（`reason_ids`）の `@decision_context_<key>` アノテーションを
+/// AuthZEN レスポンスの `context` オブジェクトへマッピングする（DESIGN.md §2.2）。
+///
+/// - 対象は `decision_context_` で始まるキーのみ。`@id` などその他のアノテーションは
+///   レスポンスに漏らさない。
+/// - `reason()` の列挙順は非決定的なため、ポリシー id の文字列順に走査して
+///   結果を決定的にする。同一キーの衝突は先勝ちとし、ポリシー不備の検知の
+///   ため warn ログに残す。
+/// - 該当アノテーションが 1 つもなければ `None`（`context` フィールド省略）。
+pub fn to_authzen_context(
+    policy_set: &PolicySet,
+    reason_ids: &[&PolicyId],
+) -> Option<Map<String, Value>> {
+    let mut ids = reason_ids.to_vec();
+    ids.sort_unstable_by_key(|id| id.to_string());
+
+    let mut context = Map::new();
+    for id in ids {
+        let Some(policy) = policy_set.policy(id) else {
+            continue;
+        };
+        for (key, value) in policy.annotations() {
+            let Some(context_key) = key.strip_prefix(CONTEXT_ANNOTATION_PREFIX) else {
+                continue;
+            };
+            if context_key.is_empty() {
+                warn!(
+                    policy_id = %id,
+                    "ignoring `@decision_context_` annotation without a context key"
+                );
+                continue;
+            }
+            match context.entry(context_key.to_string()) {
+                serde_json::map::Entry::Vacant(entry) => {
+                    entry.insert(Value::String(value.to_string()));
+                }
+                serde_json::map::Entry::Occupied(_) => {
+                    warn!(
+                        policy_id = %id,
+                        context_key,
+                        "conflicting `@decision_context_` annotation across determining policies; \
+                         keeping the value from the lexicographically first policy id"
+                    );
+                }
+            }
+        }
+    }
+
+    (!context.is_empty()).then_some(context)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    /// テスト用ポリシー集合をソーステキストから組み立てる。
+    fn policy_set(src: &str) -> PolicySet {
+        PolicySet::from_str(src).expect("test policy set should parse")
+    }
+
+    /// `@id` アノテーションの値からポリシー id を引く（`from_str` が割り当てる
+    /// `policy0` 等の内部 id に依存しないため）。
+    fn find_id<'a>(ps: &'a PolicySet, name: &str) -> &'a PolicyId {
+        ps.policies()
+            .find(|p| p.annotation("id") == Some(name))
+            .map(|p| p.id())
+            .unwrap_or_else(|| panic!("policy `{name}` not found"))
+    }
+
+    #[test]
+    fn maps_prefixed_annotations_to_context() {
+        let ps = policy_set(
+            r#"
+            @id("deny-admins")
+            @decision_context_reason_user("additional authentication required")
+            @decision_context_step_up("mfa")
+            forbid(principal, action, resource);
+            "#,
+        );
+        let reason = [find_id(&ps, "deny-admins")];
+
+        let context = to_authzen_context(&ps, &reason).expect("context should be present");
+        assert_eq!(
+            context.get("reason_user"),
+            Some(&Value::String("additional authentication required".into()))
+        );
+        assert_eq!(context.get("step_up"), Some(&Value::String("mfa".into())));
+        assert_eq!(context.len(), 2, "`@id` must not leak into the context");
+    }
+
+    #[test]
+    fn returns_none_without_matching_annotations() {
+        let ps = policy_set(
+            r#"
+            @id("allow-all")
+            permit(principal, action, resource);
+            "#,
+        );
+        let reason = [find_id(&ps, "allow-all")];
+
+        // `@id` しか付いていないポリシー、および reason が空のケースは共に None。
+        assert_eq!(to_authzen_context(&ps, &reason), None);
+        assert_eq!(to_authzen_context(&ps, &[]), None);
+    }
+
+    #[test]
+    fn first_policy_in_id_order_wins_on_conflict() {
+        let ps = policy_set(
+            r#"
+            @id("first")
+            @decision_context_reason_user("from first")
+            forbid(principal, action, resource);
+
+            @id("second")
+            @decision_context_reason_user("from second")
+            @decision_context_extra("kept")
+            forbid(principal, action, resource);
+            "#,
+        );
+        // `from_str` は定義順に policy0, policy1 を割り当てるため、id の文字列順 =
+        // 定義順になる。逆順で渡してもソートにより "first" の値が勝つこと。
+        let reason = [find_id(&ps, "second"), find_id(&ps, "first")];
+
+        let context = to_authzen_context(&ps, &reason).expect("context should be present");
+        assert_eq!(
+            context.get("reason_user"),
+            Some(&Value::String("from first".into()))
+        );
+        // 衝突しないキーは全ポリシーからマージされる。
+        assert_eq!(context.get("extra"), Some(&Value::String("kept".into())));
+    }
+
+    #[test]
+    fn valueless_annotation_maps_to_empty_string() {
+        let ps = policy_set(
+            r#"
+            @id("flag-only")
+            @decision_context_flag
+            forbid(principal, action, resource);
+            "#,
+        );
+        let reason = [find_id(&ps, "flag-only")];
+
+        let context = to_authzen_context(&ps, &reason).expect("context should be present");
+        assert_eq!(context.get("flag"), Some(&Value::String(String::new())));
+    }
+
+    #[test]
+    fn skips_prefix_only_annotation() {
+        let ps = policy_set(
+            r#"
+            @id("broken")
+            @decision_context_("no key")
+            forbid(principal, action, resource);
+            "#,
+        );
+        let reason = [find_id(&ps, "broken")];
+
+        assert_eq!(to_authzen_context(&ps, &reason), None);
+    }
 }

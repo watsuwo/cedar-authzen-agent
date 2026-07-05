@@ -72,12 +72,25 @@ pub struct Action {
 pub struct EvaluationResponse {
     /// 真偽値の認可判定。
     pub decision: bool,
+    /// PEP へ渡す追加情報。判定を決めたポリシーの `@decision_context_<key>` アノテーション
+    /// から組み立てる（DESIGN.md §2.2）。該当がなければフィールドごと省略する。
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context: Option<Map<String, Value>>,
 }
 
 impl EvaluationResponse {
     /// 判定のみを持つレスポンスを生成する。
     pub fn new(decision: bool) -> Self {
-        Self { decision }
+        Self {
+            decision,
+            context: None,
+        }
+    }
+
+    /// `context` を設定したレスポンスを返す（ビルダー風）。
+    pub fn with_context(mut self, context: Option<Map<String, Value>>) -> Self {
+        self.context = context;
+        self
     }
 }
 
