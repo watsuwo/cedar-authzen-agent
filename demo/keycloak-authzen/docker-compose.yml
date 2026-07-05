@@ -11,6 +11,7 @@ services:
       AUTHZ_BIND: 0.0.0.0:9000
       AUTHZ_POLICY_PATH: /policies/policies.cedar
       AUTHZ_SCHEMA_PATH: /policies/schema.cedar.json
+      # 15秒以上にすることで、cedar-local-agent が推奨する最小値に合わせる
       AUTHZ_POLICY_REFRESH_SECS: "15"
       AUTHZ_LOG_FORMAT: json
     volumes:

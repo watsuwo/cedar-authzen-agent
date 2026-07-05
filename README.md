@@ -26,6 +26,10 @@ policies tell the PEP *why* (e.g. `reason_user`) or *what to do next*
 `@decision_context_*` annotation applies, the `context` field is omitted.
 See [`DESIGN.md`](./DESIGN.md) §2.2 for the mapping rules.
 
+Writing policies (annotation conventions `@id`/`@description`/`@decision_context_*`,
+naming, per-action `decision` meaning, and how to add new use cases) is covered in
+[`policies/README.md`](./policies/README.md).
+
 ## Endpoints
 
 | Method | Path | Purpose |
