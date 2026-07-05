@@ -6,14 +6,19 @@
 //
 // Baseline: permit all login; client-specific `forbid` rules force external
 // auth for risky conditions. Cedar's `forbid` always wins over `permit`.
+//
+// Authoring conventions (annotations, naming, adding new use cases):
+// see ./README.md ("ポリシー定義ルール").
 
 @id("allow-login")
+@description("Baseline: permit all logins. Client-specific forbid rules below override this to force external auth for risky conditions.")
 permit(principal, action == Action::"login", resource);
 
 // a-client: force external auth for employees in dept "A*" over the internet.
 // `@decision_context_<key>` annotations are returned to the PEP as the AuthZEN response
 // `context` when this policy determines the decision (DESIGN.md §2.2).
 @id("a-client-deny")
+@description("a-client: force external auth for employees in dept A* arriving over the internet. Step up privileged-department access from untrusted routes.")
 @decision_context_reason_user("External authentication is required for this access route.")
 @decision_context_step_up("external-auth")
 forbid(principal, action == Action::"login", resource == Client::"a-client")
@@ -25,6 +30,7 @@ when {
 
 // b-client: force external auth for partners arriving over the internal route.
 @id("b-client-deny")
+@description("b-client: force external auth for partners arriving over the internal route.")
 forbid(principal, action == Action::"login", resource == Client::"b-client")
 when {
   principal has user_type && principal.user_type == "partner" &&

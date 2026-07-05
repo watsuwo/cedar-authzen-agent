@@ -135,6 +135,10 @@ when { ... };
 - PDP が組み込みで付与するフィールドはない。`context` の内容はポリシー作者が
   明示したものだけで構成される（内部情報の漏洩を最小化）。
 
+ポリシー作者向けの規約（アノテーション `@id`/`@description`/`@decision_context_*` の使い分け、
+命名、`decision` の用途別マッピング、新用途の追加手順）は
+[`policies/README.md`](./policies/README.md)（ポリシー定義ルール）にまとめる。
+
 ### 2.3 ポリシー例（外部認証連携の強制）
 
 「外部認証連携を強制するか」は `Action::"login"` への `permit`/`forbid` で表現する。基底の
