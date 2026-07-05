@@ -498,6 +498,102 @@ schema は採用（§13）。`User`/`Client`/アクション/属性を定義し�
 
 ---
 
+## 14. 現行実装の処理フロー
+
+MVP 実装（`src/`）の現行処理を 3 つの主要フローで示す。モジュール構成は
+`main` / `server` / `config` / `policy` / `convert` / `handlers` / `error` /
+`state` / `telemetry` / `health` / `authzen`（§3 のレイヤ構成に対応）。
+
+### 14.1 起動フロー（`main` → `server::run`）
+
+`main` はサブコマンド振り分けとランタイム起動のみ行い、サーバ本体の組み立ては
+`server::run` に委譲する。ポリシー/スキーマの検証は起動時 fail-fast（§4 ⑤, §7）。
+
+```mermaid
+flowchart TD
+    A[main 起動] --> B{argv[1] == "health"?}
+    B -- Yes --> H[health::run<br/>/healthz へ TCP 接続<br/>200 で exit 0 / それ以外 1<br/>§10]
+    B -- No --> C[Tokio マルチスレッド<br/>ランタイム構築]
+    C --> D[server::run]
+
+    D --> E[telemetry::init<br/>tracing 初期化<br/>AUTHZ_LOG_FORMAT=json 尊重]
+    E --> F[Config::from_env<br/>bind/policy/schema/refresh/body_limit<br/>§6]
+    F --> G[policy::load_schema<br/>スキーマ JSON をパース]
+    G --> I[policy::new_provider<br/>PolicySetProvider 構築＝構文検証のみ]
+    I --> J[policy::validate<br/>スキーマ strict 型検査<br/>§4 ③']
+    J -- 失敗 --> K[起動中止 fail-fast]
+    J -- 成功 --> L[new_authorizer<br/>Policy + 空 EntityProvider + 評価エンジン<br/>§2.1, §4 ②]
+    L --> M[Readiness::new true]
+    M --> N[policy::spawn_reload_task<br/>ホットリロード監視を起動<br/>§14.3]
+    N --> O[router 構築 + DefaultBodyLimit]
+    O --> P[TcpListener::bind]
+    P --> Q[axum::serve<br/>graceful shutdown 付き]
+    Q --> R{SIGTERM / Ctrl-C?}
+    R -- 受信 --> S[graceful shutdown → exit 0]
+```
+
+### 14.2 リクエスト評価フロー（`POST /access/v1/evaluation`）
+
+`handlers::evaluate` が deserialize → `convert::to_cedar`（スキーマ検証込み）→
+`Authorizer::is_authorized` の順に処理する。エラーは `ApiError` の `IntoResponse`
+実装で HTTP ステータス＋最小 JSON（§8）へ一元変換される。`Deny` = 外部認証連携を
+強制（§2.1）。
+
+```mermaid
+flowchart TD
+    A[POST /access/v1/evaluation<br/>Bytes 受信] --> B[serde_json でデシリアライズ<br/>EvaluationRequest]
+    B -- 失敗 --> E1[ApiError::InvalidJson<br/>400 invalid_json]
+
+    B -- 成功 --> C[convert::to_cedar<br/>スキーマ検証つき変換]
+
+    subgraph convert [convert::to_cedar §2.1, §4 ③]
+        C1[subject/action/resource<br/>→ Cedar EntityUid] --> C2[context → Cedar Context<br/>action の context スキーマで strict 検証]
+        C2 --> C3[Request::new schema付き<br/>appliesTo 整合を検証]
+        C3 --> C4[principal 常に注入<br/>+ resource 属性があれば注入<br/>Entities::from_json_value schema検証]
+    end
+
+    C -- 変換/検証失敗 --> E2[ApiError::Conversion<br/>400 invalid_entity/context/<br/>properties/request]
+
+    C -- 成功 --> D[authorizer.is_authorized<br/>現ポリシー集合で評価<br/>OCSF 認可ログ発行]
+    D -- 認可器エラー --> E3[ApiError::Evaluation<br/>500 evaluation_failed<br/>詳細はログのみ §8]
+    D -- 成功 --> F{Decision}
+    F -- Allow --> G1[200 decision: true<br/>通常ログイン許可]
+    F -- Deny --> G2[200 decision: false<br/>外部認証連携を強制]
+```
+
+その他のエンドポイント: `GET /.well-known/authzen-configuration`（`Host` から
+ベース URL を導出しメタデータを返す, §2）、`GET /healthz`（プロセス生存で常時 200）、
+`GET /readyz`（`Readiness` 参照 → ready なら 200 / リロード失敗時 503, §10）。
+
+### 14.3 ポリシーのホットリロード（バックグラウンドタスク）
+
+`policy::spawn_reload_task` が `file_inspector_task`（SHA256 差分検知）を起動し、
+変更イベントごとに反映前スキーマ検証を行う。ライブラリの `update_provider_data_task`
+は成否を握り潰すため使わず、成否を `Readiness` に記録する自前ループにしている
+（§7, §10）。
+
+```mermaid
+flowchart TD
+    A[spawn_reload_task] --> B[file_inspector_task<br/>refresh 間隔でポリシーを監視]
+    B --> C[receiver.recv でイベント待ち]
+    C -- チャネル閉塞 --> Z[監視タスク終了 → ループ break]
+    C -- 変更イベント --> D[reload]
+
+    subgraph reload [reload §7, §4 ③']
+        D1[policy::validate<br/>差し替え前にスキーマ検証] -- 失敗 --> D2[旧ポリシー維持<br/>readiness=false]
+        D1 -- 成功 --> D3[update_provider_data<br/>PolicySet をアトミック差し替え]
+        D3 -- 成功 --> D4[readiness=true]
+        D3 -- 失敗 --> D5[旧ポリシー維持<br/>readiness=false]
+    end
+
+    D --> C
+```
+
+`readiness` は `/readyz` が参照する共有 `AtomicBool`（`state::Readiness`）。
+起動時ロード成功で `true` 開始、以降のリロード失敗でのみ `false` に倒れる（§10）。
+
+---
+
 ## 補遺 A. Batch / Search（現時点で対象外）
 
 将来 AuthZEN の他 API が必要になった場合の覚書。

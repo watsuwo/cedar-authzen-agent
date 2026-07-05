@@ -12,9 +12,7 @@
 
 use std::str::FromStr;
 
-use cedar_policy::{
-    Context, Entities, EntityId, EntityTypeName, EntityUid, Request, Schema,
-};
+use cedar_policy::{Context, Entities, EntityId, EntityTypeName, EntityUid, Request, Schema};
 use serde_json::{json, Map, Value};
 use thiserror::Error;
 
@@ -31,26 +29,26 @@ const ACTION_TYPE: &str = "Action";
 pub enum ConversionError {
     /// `type`/`id`/`name` を Cedar のエンティティ uid にパースできなかった。
     #[error("invalid entity reference: {0}")]
-    InvalidEntity(String),
+    Entity(String),
     /// AuthZEN の `context` がスキーマ検証に失敗した。
     #[error("invalid context: {0}")]
-    InvalidContext(String),
+    Context(String),
     /// `properties` がエンティティ属性としてのスキーマ検証に失敗した。
     #[error("invalid properties: {0}")]
-    InvalidProperties(String),
+    Properties(String),
     /// 組み立てたリクエストがスキーマ検証に失敗した（未知のアクション・型など）。
     #[error("invalid request: {0}")]
-    InvalidRequest(String),
+    Request(String),
 }
 
 impl ConversionError {
     /// JSON エラーボディ用の安定したエラーコード（DESIGN.md §8）。
     pub fn code(&self) -> &'static str {
         match self {
-            Self::InvalidEntity(_) => "invalid_entity",
-            Self::InvalidContext(_) => "invalid_context",
-            Self::InvalidProperties(_) => "invalid_properties",
-            Self::InvalidRequest(_) => "invalid_request",
+            Self::Entity(_) => "invalid_entity",
+            Self::Context(_) => "invalid_context",
+            Self::Properties(_) => "invalid_properties",
+            Self::Request(_) => "invalid_request",
         }
     }
 }
@@ -58,9 +56,9 @@ impl ConversionError {
 /// `type` + `id` のペアから Cedar のエンティティ uid を組み立てる（値はそのまま使う）。
 fn entity_uid(entity_type: &str, id: &str) -> Result<EntityUid, ConversionError> {
     let type_name = EntityTypeName::from_str(entity_type)
-        .map_err(|e| ConversionError::InvalidEntity(format!("type `{entity_type}`: {e}")))?;
-    let entity_id = EntityId::from_str(id)
-        .map_err(|e| ConversionError::InvalidEntity(format!("id `{id}`: {e}")))?;
+        .map_err(|e| ConversionError::Entity(format!("type `{entity_type}`: {e}")))?;
+    let entity_id =
+        EntityId::from_str(id).map_err(|e| ConversionError::Entity(format!("id `{id}`: {e}")))?;
     Ok(EntityUid::from_type_name_and_id(type_name, entity_id))
 }
 
@@ -94,21 +92,15 @@ pub fn to_cedar(
     // スキーマ外の属性は弾かれる。context 省略時は空の Context を使う。
     let context = match &req.context {
         Some(value) => Context::from_json_value(value.clone(), Some((schema, &action)))
-            .map_err(|e| ConversionError::InvalidContext(e.to_string()))?,
+            .map_err(|e| ConversionError::Context(e.to_string()))?,
         None => Context::empty(),
     };
 
     // `Request::new` に `Some(schema)` を渡すと、principal/action/resource の型が
     // スキーマのアクション定義（appliesTo）と整合するかを検証する。未知のアクション
     // や、そのアクションに許可されない principal 型などはここで弾かれる。
-    let request = Request::new(
-        principal,
-        action,
-        resource,
-        context,
-        Some(schema),
-    )
-    .map_err(|e| ConversionError::InvalidRequest(e.to_string()))?;
+    let request = Request::new(principal, action, resource, context, Some(schema))
+        .map_err(|e| ConversionError::Request(e.to_string()))?;
 
     // principal エンティティ（`subject.properties` 由来の属性付き、空の場合もある）を
     // 注入する。resource エンティティは属性を持つ場合のみ追加する。
@@ -120,14 +112,18 @@ pub fn to_cedar(
         subject_props,
     )];
     if let Some(props) = req.resource.properties.as_ref().filter(|p| !p.is_empty()) {
-        entity_values.push(entity_json(&req.resource.entity_type, &req.resource.id, props));
+        entity_values.push(entity_json(
+            &req.resource.entity_type,
+            &req.resource.id,
+            props,
+        ));
     }
 
     // `Entities::from_json_value` に `Some(schema)` を渡すと、各エンティティの属性が
     // スキーマの shape に一致するか検証される（スキーマ外の属性は弾かれる）。
     // また、スキーマで定義されたアクションエンティティも自動的に補完される。
     let entities = Entities::from_json_value(Value::Array(entity_values), Some(schema))
-        .map_err(|e| ConversionError::InvalidProperties(e.to_string()))?;
+        .map_err(|e| ConversionError::Properties(e.to_string()))?;
 
     Ok((request, entities))
 }
