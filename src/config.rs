@@ -38,22 +38,15 @@ pub enum ConfigError {
 impl Config {
     /// プロセスの環境から設定を読み込み、デフォルトを適用する。
     pub fn from_env() -> Result<Self, ConfigError> {
-        let bind = env_or("AUTHZ_BIND", "127.0.0.1:9000");
-        let bind: SocketAddr = bind
-            .parse()
-            .map_err(|e| ConfigError::Invalid("AUTHZ_BIND", format!("{e}")))?;
+        let bind = parse_env("AUTHZ_BIND", "127.0.0.1:9000")?;
 
         let policy_path = require("AUTHZ_POLICY_PATH")?;
         let schema_path = require("AUTHZ_SCHEMA_PATH")?;
 
-        let refresh_secs: u64 = env_or("AUTHZ_POLICY_REFRESH_SECS", "30")
-            .parse()
-            .map_err(|e| ConfigError::Invalid("AUTHZ_POLICY_REFRESH_SECS", format!("{e}")))?;
+        let refresh_secs: u64 = parse_env("AUTHZ_POLICY_REFRESH_SECS", "30")?;
         let refresh = Duration::from_secs(refresh_secs.max(MIN_REFRESH_SECS));
 
-        let body_limit: usize = env_or("AUTHZ_REQUEST_BODY_LIMIT", "65536")
-            .parse()
-            .map_err(|e| ConfigError::Invalid("AUTHZ_REQUEST_BODY_LIMIT", format!("{e}")))?;
+        let body_limit = parse_env("AUTHZ_REQUEST_BODY_LIMIT", "65536")?;
 
         Ok(Self {
             bind,
@@ -70,9 +63,9 @@ impl Config {
     /// 代わりにループバック宛てに接続する。
     pub fn health_target() -> SocketAddr {
         let bind = env_or("AUTHZ_BIND", "127.0.0.1:9000");
-        let addr: SocketAddr = bind.parse().unwrap_or_else(|_| {
-            SocketAddr::from(([127, 0, 0, 1], 9000))
-        });
+        let addr: SocketAddr = bind
+            .parse()
+            .unwrap_or_else(|_| SocketAddr::from(([127, 0, 0, 1], 9000)));
         if addr.ip().is_unspecified() {
             SocketAddr::from(([127, 0, 0, 1], addr.port()))
         } else {
@@ -87,4 +80,16 @@ fn env_or(key: &str, default: &str) -> String {
 
 fn require(key: &'static str) -> Result<String, ConfigError> {
     std::env::var(key).map_err(|_| ConfigError::Missing(key))
+}
+
+/// 環境変数（未設定時は `default`）を任意の `FromStr` 型としてパースする。
+/// 失敗時はどの変数が不正かを示す `ConfigError::Invalid` を返す。
+fn parse_env<T>(key: &'static str, default: &str) -> Result<T, ConfigError>
+where
+    T: std::str::FromStr,
+    T::Err: std::fmt::Display,
+{
+    env_or(key, default)
+        .parse()
+        .map_err(|e: T::Err| ConfigError::Invalid(key, e.to_string()))
 }
