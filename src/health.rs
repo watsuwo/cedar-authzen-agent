@@ -1,9 +1,3 @@
-//! `health` サブコマンド: 稼働中サーバの `/healthz` を叩くヘルスチェック
-//! クライアント（DESIGN.md §10）。
-//!
-//! シェルや curl の無い distroless イメージの `healthCheck` から呼ばれるため、
-//! 依存を増やさずブロッキングな自前 TCP クライアントで実装する。
-
 use std::io::{Read, Write};
 use std::net::TcpStream;
 use std::process::ExitCode;
@@ -11,10 +5,8 @@ use std::time::Duration;
 
 use crate::config::Config;
 
-/// 接続タイムアウト。コンテナのヘルスチェックが応答しないよりは早く諦める。
-const CONNECT_TIMEOUT: Duration = Duration::from_secs(2);
+const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// `/healthz` に接続し、0（健全）または 1（異常）で終了する。
 pub fn run() -> ExitCode {
     let target = Config::health_target();
     let mut stream = match TcpStream::connect_timeout(&target, CONNECT_TIMEOUT) {
@@ -37,7 +29,6 @@ pub fn run() -> ExitCode {
         return ExitCode::FAILURE;
     }
 
-    // ステータスライン（例: `HTTP/1.0 200 OK`）だけ見れば十分。
     if response
         .lines()
         .next()
