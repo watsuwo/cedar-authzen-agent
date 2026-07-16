@@ -63,7 +63,11 @@ pub async fn evaluate(
 
     let reason_ids: Vec<_> = response.diagnostics().reason().collect();
     let policy_set = state.provider.get_policy_set(&cedar_request).await.ok();
-    let determining_policies = reason_ids
+
+    // determining policies を可読 id（`@id`、無ければ内部 id）へ解決。ログと
+    // レスポンス context の予約フィールド `reason` の両方で使う。
+    // `reason()` の反復順は非決定的なので、レスポンス/ログを安定させるためソートする。
+    let mut reason = reason_ids
         .iter()
         .map(|id| {
             policy_set
@@ -72,8 +76,8 @@ pub async fn evaluate(
                 .map(str::to_string)
                 .unwrap_or_else(|| id.to_string())
         })
-        .collect::<Vec<_>>()
-        .join(",");
+        .collect::<Vec<_>>();
+    reason.sort_unstable();
 
     let policy_errors = response
         .diagnostics()
@@ -88,15 +92,17 @@ pub async fn evaluate(
         );
     }
 
-    let context = policy_set
+    // アノテーション由来の context に、cedar-local-agent 応答由来の `reason`/`errors` を付与。
+    let annotation_context = policy_set
         .as_ref()
         .and_then(|ps| convert::to_decision_context(ps, &reason_ids));
+    let context = convert::build_context(annotation_context, &reason, &policy_errors);
 
     info!(
         %subject, %action, %resource,
         decision = if allowed { "allow" } else { "deny" },
         external_auth_forced = !allowed,
-        determining_policies = %determining_policies,
+        determining_policies = %reason.join(","),
         latency_ms = started.elapsed().as_millis() as u64,
         "access evaluation completed"
     );

@@ -131,9 +131,35 @@ when { ... };
   アノテーションも対象（`decision: true` でも返しうる）。
 - 複数の determining policies に同じキーがある場合は、ポリシー id の文字列順で
   **先勝ち**（衝突は warn ログに記録）。
-- 該当アノテーションが 1 つもなければ `context` フィールド自体を省略する。
-- PDP が組み込みで付与するフィールドはない。`context` の内容はポリシー作者が
-  明示したものだけで構成される（内部情報の漏洩を最小化）。
+- 該当アノテーションが 1 つもなければ（かつ後述の予約フィールドも空なら）`context`
+  フィールド自体を省略する。
+
+##### PDP 予約フィールド（`reason` / `errors`）
+
+アノテーション由来のキーに加え、PDP は cedar-local-agent の応答情報を以下の**予約キー**で
+`context` に付与する（`src/convert.rs` `build_context`）。
+
+- `reason`: determining policies（`diagnostics().reason()`）の可読 id（`@id`、無ければ内部 id）
+  の**文字列配列**。空（default-deny 等）なら付与しない。
+- `errors`: 評価時に発生し無視されたポリシーのエラー文字列（`diagnostics().errors()`）の**配列**。
+  空なら付与しない。
+
+```json
+{
+  "decision": false,
+  "context": {
+    "reason_user": "追加認証が必要です",     // アノテーション由来
+    "step_up": "external-auth",
+    "reason": ["a-client-deny", "b-client-deny"], // PDP 予約（複数 forbid 一致時は全件）
+    "errors": []                              // ← 空なら省略。ここでは説明用
+  }
+}
+```
+
+- `reason` / `errors` は**予約キー**。作者が `@decision_context_reason` /
+  `@decision_context_errors` を定義しても PDP 値で上書きする（衝突は warn ログに記録）。
+- `reason` は `@id` を PEP に露出する（監査 id をレスポンスに載せる方針変更）。`errors` は
+  ポリシー評価エラー文字列を含むため、内部情報が PEP に渡りうる点に留意（従来はログのみ）。
 
 ポリシー作者向けの規約（アノテーション `@id`/`@description`/`@decision_context_*` の使い分け、
 命名、`decision` の用途別マッピング、新用途の追加手順）は

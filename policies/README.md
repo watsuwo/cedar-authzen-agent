@@ -65,6 +65,10 @@ Cedar のアノテーション（`@key("value")`）は**評価に影響しない
 - アノテーション値は Cedar の制約上**常に文字列**（数値・真偽は文字列で表現）。
 - `@decision_context_*` の衝突マージ規則（determining policies のみ・id 文字列順で先勝ち・
   空プレフィックスは無視）は DESIGN.md §2.2。
+- **予約キー `reason` / `errors`**: PDP が determining policies の `@id` 一覧（`reason`）と
+  評価エラー（`errors`）をこの 2 キーで `context` に付与する（DESIGN.md §2.2）。
+  作者が `@decision_context_reason` / `@decision_context_errors` を定義しても**上書きされる**
+  ため、この 2 キーは使わない。
 
 ### 3.1 `@id` の命名規約
 
