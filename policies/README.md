@@ -46,24 +46,26 @@
 ## 3. アノテーション規約
 
 Cedar のアノテーション（`@key("value")`）は**評価に影響しない**メタデータ。この PDP が
-**解釈するのは 2 種類だけ**で、それ以外はすべて Cedar/PDP に無視される純粋なドキュメントである。
+**解釈するのは 3 種類だけ**で、それ以外はすべて Cedar/PDP に無視される純粋なドキュメントである。
 そのため、レビューや運用のためのメタ情報は自由に付けてよい。
 
 | アノテーション | 必須 | 用途 | PEP に返る |
 |---|---|---|---|
-| `@id("...")` | **必須** | 監査ログの可読 id、`context` マージ順の安定キー | いいえ |
+| `@id("...")` | **必須** | 監査ログの可読 id、`@priority` 同値時のタイブレークキー | いいえ |
+| `@priority("<非負整数>")` | 任意 | 決定ポリシーが複数あるときに `context` の出所を選ぶ（§3.3） | いいえ |
 | `@description("...")` | 推奨 | 何を・なぜ（人間・レビュー用の説明） | いいえ |
 | `@decision_context_<key>("...")` | 任意 | レスポンス `context.<key>` に載せる（DESIGN.md §2.2） | **はい** |
 | `@owner` / `@reference` / `@last_reviewed` 等 | 任意 | 運用メタ（担当・チケット・棚卸し日） | いいえ |
 
 規約:
 
-- **PDP が読むのは `@id` と `@decision_context_*` のみ**。前者は監査ログの可読 id への解決
-  （`src/handlers.rs`）、後者はレスポンス `context` への転記（`src/convert.rs`）に使う。
+- **PDP が読むのは `@id` と `@priority` と `@decision_context_*` のみ**。`@id` は監査ログの
+  可読 id への解決（`src/handlers.rs`）、`@priority` は `context` の出所選択、
+  `@decision_context_*` はレスポンス `context` への転記（いずれも `src/convert.rs`）に使う。
 - **レスポンスに漏れるのは `@decision_context_*` だけ**。PII・内部情報・スタックの詳細を
   `decision_context_` に入れてはいけない。人間向けの説明は `@description` に書く。
 - アノテーション値は Cedar の制約上**常に文字列**（数値・真偽は文字列で表現）。
-- `@decision_context_*` の衝突マージ規則（determining policies のみ・id 文字列順で先勝ち・
+- `@decision_context_*` の選択規則（determining policies のみ・最優先 1 ポリシーのみ採用・
   空プレフィックスは無視）は DESIGN.md §2.2。
 - **予約キー `reason` / `errors`**: PDP が determining policies の `@id` 一覧（`reason`）と
   評価エラー（`errors`）をこの 2 キーで `context` に付与する（DESIGN.md §2.2）。
@@ -86,12 +88,38 @@ Cedar のアノテーション（`@key("value")`）は**評価に影響しない
 
 ```cedar
 @id("login-a-client-forbid")
+@priority("100")
 @description("a-client: employee かつ 部署 A* かつ インターネット経路のとき外部認証を強制。社外経路からの特権部署アクセスを step-up させるため。")
 @decision_context_reason_user("この経路では外部認証が必要です")
 @decision_context_step_up("external-auth")
 forbid(principal, action == Action::"login", resource == Client::"a-client")
 when { ... };
 ```
+
+### 3.3 `@priority` の規約
+
+複数のポリシーが同時に判定を決めうる（例: クライアント別 `forbid` と全クライアント共通の
+`forbid` が両方成立する）場合、レスポンス `context` を**どのポリシーから作るか**を決めるのが
+`@priority`。**認可判定（Allow/Deny）そのものには一切影響しない** —— そちらは Cedar の
+`forbid` 優先規則で決まる。
+
+- **値が小さいほど優先**（`@priority("1")` が `@priority("100")` に勝つ）。
+- **未指定は最低優先度**。`@priority` の付いたポリシーがあれば、そちらが必ず先に選ばれる。
+- **同値のタイブレークは `@id` の文字列順で先勝ち**。順序は決定的だが `@id` の命名に
+  依存するため、優先順位に意味を持たせたいなら `@priority` を明示すること。
+- **採用されるのは 1 ポリシーだけ**。キー単位のマージはしないので、
+  下位ポリシーにしか無いキーは返らない。理由文と次アクションの出所を揃えるための仕様
+  （DESIGN.md §2.2）。
+- **最優先ポリシーが `@decision_context_*` を持たなければ `context` は省略される**
+  （下位にフォールバックしない）。意図的に理由を返さないポリシーを書ける。
+- 値は**非負整数のみ**。`@priority("high")` のような不正値はロード時に拒否され、
+  起動時はプロセス終了、リロード時は反映拒否＋`/readyz` 503 になる（§6）。
+
+**採番の指針**: クライアント別・リソース別の通常ルールを `100` に置き、全体に横断的にかかる
+例外（メンテナンス告知、インシデント対応、規制対応など）を `1`〜`50` に置く。
+数値に間隔を空けておくと、後から中間の優先度を差し込める。
+
+どのポリシーが `context` を出したかは監査ログの `context_policy` フィールドで追える。
 
 ---
 
@@ -131,6 +159,8 @@ when { ... };
 - **ロード時 schema strict 型検証**: schema に無い型/属性/action を参照するポリシーは、
   起動時は fail-fast、リロード時は反映拒否＋not-ready になる（DESIGN.md §4 ③', §7, §10）。
   「構文は正しいが schema 不整合」なポリシーが live になることはない。
+- **ロード時アノテーション検証**: `@priority` が非負整数でないポリシーも同じ扱いで弾かれる
+  （`src/policy.rs`）。リロード拒否時は旧ポリシーで評価が継続し、`/readyz` が 503 を返す。
 - **ローカル**: `cargo test`（`src/convert.rs` の `context` マッピング等）。Cedar CLI があれば
   `cedar validate --schema schema.cedar.json --policies policies.cedar` でも検証できる。
 - **E2E**: デモ設定でサーバを起動し、期待する `decision`/`context` を確認
@@ -144,6 +174,7 @@ when { ... };
 
 - [ ] `@id` を付ける（ケバブケース・一意・不変）
 - [ ] `@description` で「何を・なぜ」を残す
+- [ ] 他ポリシーと同時に成立しうるなら `@priority` を明示（§3.3。小さいほど優先・未指定は最低）
 - [ ] 新 action は §2 の登録簿に `decision` の意味を追加
 - [ ] `principal has X` 等の属性ガードを付け、欠落時のフェイル挙動が安全側か確認
 - [ ] `action ==` / `resource ==` でスコープを明示

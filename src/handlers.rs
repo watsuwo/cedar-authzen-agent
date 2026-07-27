@@ -47,7 +47,11 @@ pub async fn evaluate(
         }
     };
 
-    let response = match state.authorizer.is_authorized(&cedar_request, &entities).await {
+    let response = match state
+        .authorizer
+        .is_authorized(&cedar_request, &entities)
+        .await
+    {
         Ok(response) => response,
         Err(error) => {
             error!(
@@ -72,8 +76,8 @@ pub async fn evaluate(
         .map(|id| {
             policy_set
                 .as_ref()
-                .and_then(|ps| ps.annotation(id, "id"))
-                .map(str::to_string)
+                .and_then(|ps| ps.policy(id))
+                .map(convert::display_id)
                 .unwrap_or_else(|| id.to_string())
         })
         .collect::<Vec<_>>();
@@ -92,10 +96,15 @@ pub async fn evaluate(
         );
     }
 
-    // アノテーション由来の context に、cedar-local-agent 応答由来の `reason`/`errors` を付与。
-    let annotation_context = policy_set
+    // アノテーション由来の context は最優先の決定ポリシー1件から生成し（@priority 昇順）、
+    // そこへ cedar-local-agent 応答由来の `reason`/`errors` を予約フィールドとして付与する。
+    let (context_policy, annotation_context) = match policy_set
         .as_ref()
-        .and_then(|ps| convert::to_decision_context(ps, &reason_ids));
+        .and_then(|ps| convert::to_decision_context(ps, &reason_ids))
+    {
+        Some((policy_id, context)) => (policy_id, Some(context)),
+        None => ("-".to_string(), None),
+    };
     let context = convert::build_context(annotation_context, &reason, &policy_errors);
 
     info!(
@@ -103,6 +112,7 @@ pub async fn evaluate(
         decision = if allowed { "allow" } else { "deny" },
         external_auth_forced = !allowed,
         determining_policies = %reason.join(","),
+        context_policy = %context_policy,
         latency_ms = started.elapsed().as_millis() as u64,
         "access evaluation completed"
     );

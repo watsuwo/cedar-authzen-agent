@@ -16,8 +16,12 @@ permit(principal, action == Action::"login", resource);
 
 // a-client: force external auth for employees in dept "A*" over the internet.
 // `@decision_context_<key>` annotations are returned to the PEP as the AuthZEN response
-// `context` when this policy determines the decision (DESIGN.md §2.2).
+// `context` when this policy determines the decision. When several policies determine the
+// decision, only the one with the lowest `@priority` supplies the whole `context`
+// (DESIGN.md §2.2). Client-specific rules sit at 100, leaving room for higher-priority
+// cross-cutting rules below that.
 @id("a-client-deny")
+@priority("100")
 @description("a-client: force external auth for employees in dept A* arriving over the internet. Step up privileged-department access from untrusted routes.")
 @decision_context_reason_user("External authentication is required for this access route.")
 @decision_context_step_up("external-auth")
@@ -30,6 +34,7 @@ when {
 
 // b-client: force external auth for partners arriving over the internal route.
 @id("b-client-deny")
+@priority("100")
 @description("b-client: force external auth for partners arriving over the internal route.")
 forbid(principal, action == Action::"login", resource == Client::"b-client")
 when {

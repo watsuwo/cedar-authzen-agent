@@ -24,9 +24,9 @@ pub async fn run() -> Result<(), crate::Error> {
     let schema = Arc::new(policy::load_schema(&cfg.schema_path)?);
     let provider = policy::new_provider(&cfg.policy_path)?;
 
-    // スキーマ検証に失敗するポリシーは適用しない
+    // スキーマ検証・アノテーション検証に失敗するポリシーは適用しない
     let policy_count = policy::validate(&cfg.policy_path, &schema)
-        .map_err(|e| format!("startup policy schema validation failed: {e}"))?;
+        .map_err(|e| format!("startup policy validation failed: {e}"))?;
     info!("loaded and validated policy set: {policy_count} policies");
 
     let authorizer = new_authorizer(provider.clone())?;
