@@ -116,6 +116,44 @@ pub fn to_decision_context(
     (!context.is_empty()).then_some(context)
 }
 
+// PDP が予約するフィールド。作者の `@decision_context_*` と衝突した場合はこちらで上書きする。
+const RESERVED_REASON_KEY: &str = "reason";
+const RESERVED_ERRORS_KEY: &str = "errors";
+
+// アノテーション由来の context に、cedar-local-agent の応答情報（determining policies の
+// `reason`、評価エラーの `errors`）を予約フィールドとしてマージする。
+// どちらも該当が空なら付与しない。全て空なら context 自体を省略する（None）。
+pub fn build_context(
+    annotation_context: Option<Map<String, Value>>,
+    reason: &[String],
+    errors: &[String],
+) -> Option<Map<String, Value>> {
+    let mut context = annotation_context.unwrap_or_default();
+
+    if !reason.is_empty() {
+        insert_reserved(&mut context, RESERVED_REASON_KEY, string_array(reason));
+    }
+    if !errors.is_empty() {
+        insert_reserved(&mut context, RESERVED_ERRORS_KEY, string_array(errors));
+    }
+
+    (!context.is_empty()).then_some(context)
+}
+
+fn string_array(values: &[String]) -> Value {
+    Value::Array(values.iter().cloned().map(Value::String).collect())
+}
+
+// 予約キーは PDP 値を優先する。作者アノテーションを上書きした場合は warn を残す。
+fn insert_reserved(context: &mut Map<String, Value>, key: &str, value: Value) {
+    if context.insert(key.to_string(), value).is_some() {
+        warn!(
+            context_key = key,
+            "PDP-reserved context key overwrote an author `@decision_context_` annotation"
+        );
+    }
+}
+
 fn insert_decision_context(context: &mut Map<String, Value>, id: &PolicyId, key: &str, value: &str) {
     let Some(context_key) = key.strip_prefix(DECISION_CONTEXT_PREFIX) else {
         return;
@@ -251,5 +289,62 @@ mod tests {
         let reason = [find_id(&ps, "broken")];
 
         assert_eq!(to_decision_context(&ps, &reason), None);
+    }
+
+    fn strings(values: &[&str]) -> Vec<String> {
+        values.iter().map(|s| s.to_string()).collect()
+    }
+
+    #[test]
+    fn build_context_adds_reason_and_errors_as_string_arrays() {
+        let reason = strings(&["deny-one", "deny-two"]);
+        let errors = strings(&["policy0 evaluation error"]);
+
+        let context = build_context(None, &reason, &errors).expect("context should be present");
+        assert_eq!(
+            context.get("reason"),
+            Some(&json!(["deny-one", "deny-two"]))
+        );
+        assert_eq!(
+            context.get("errors"),
+            Some(&json!(["policy0 evaluation error"]))
+        );
+    }
+
+    #[test]
+    fn build_context_merges_with_annotation_context() {
+        let mut annotations = Map::new();
+        annotations.insert("reason_user".into(), Value::String("mfa".into()));
+
+        let context = build_context(Some(annotations), &strings(&["deny-one"]), &[])
+            .expect("context should be present");
+
+        // 作者アノテーションと予約フィールドが共存する。
+        assert_eq!(
+            context.get("reason_user"),
+            Some(&Value::String("mfa".into()))
+        );
+        assert_eq!(context.get("reason"), Some(&json!(["deny-one"])));
+        // errors は空なので付かない。
+        assert!(!context.contains_key("errors"));
+    }
+
+    #[test]
+    fn build_context_omits_empty_arrays_and_returns_none_when_empty() {
+        // reason / errors が空、アノテーションも無ければ context 自体を省略。
+        assert_eq!(build_context(None, &[], &[]), None);
+        // 空アノテーション + 空 reason/errors も None。
+        assert_eq!(build_context(Some(Map::new()), &[], &[]), None);
+    }
+
+    #[test]
+    fn build_context_reserved_key_overwrites_author_annotation() {
+        // 作者が `@decision_context_reason` を使うと予約フィールドで上書きされる。
+        let mut annotations = Map::new();
+        annotations.insert("reason".into(), Value::String("author value".into()));
+
+        let context = build_context(Some(annotations), &strings(&["deny-one"]), &[])
+            .expect("context should be present");
+        assert_eq!(context.get("reason"), Some(&json!(["deny-one"])));
     }
 }
