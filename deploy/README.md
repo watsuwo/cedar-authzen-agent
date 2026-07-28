@@ -2,7 +2,8 @@
 
 Artifacts:
 
-- [`../Dockerfile`](../Dockerfile) — multi-stage build, distroless runtime.
+- [`../Dockerfile`](../Dockerfile) — cargo-chef multi-stage build, distroless
+  (`cc-debian12:nonroot`) runtime, ~12 MB.
 - [`ecs-task-definition.json`](./ecs-task-definition.json) — Fargate task with
   Keycloak + `authz-sidecar`, S3 Files volume for the policy store.
 
@@ -15,7 +16,13 @@ See [`../DESIGN.md`](../DESIGN.md) §11 / §5 for the design rationale.
 docker buildx build --platform linux/amd64 \
   -t <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/authzen-pdp:0.1.0 \
   --push .
+
+# Run the test suite inside the same build (optional target).
+docker buildx build --target test .
 ```
+
+> Building for a foreign `--platform` uses QEMU emulation and is slow. When
+> iterating locally, drop `--platform` to build natively.
 
 ## S3 Files prerequisites (DESIGN.md §5)
 
