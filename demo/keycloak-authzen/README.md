@@ -1,9 +1,9 @@
-# Keycloak × authzen-sidecar — クライアント別ログイン拒否デモ (AuthZEN)
+# Keycloak × authzen-pdp — クライアント別ログイン拒否デモ (AuthZEN)
 
 このデモは、Keycloak に登録された**クライアントごと**に「このユーザーのログインを
 拒否すべきか」を判定します。Keycloak のブラウザログインフローにカスタム
 **Authenticator (Java SPI)** を差し込み、ユーザー名／パスワード入力の直後に、本リポジトリの
-**authzen-sidecar** (PDP) を [AuthZEN](https://openid.github.io/authzen/)
+**authzen-pdp** (PDP) を [AuthZEN](https://openid.github.io/authzen/)
 `POST /access/v1/evaluation` API で呼び出し、**属性ベース (ABAC)** の Cedar ポリシーで
 ログインの可否を決めます。
 
@@ -12,13 +12,13 @@
                                │  AuthZEN /access/v1/evaluation
    (auth-username-password-form)│  subject=user(+attrs) action=login resource=Client
                                ▼
-                       authzen-sidecar (PDP) ── Cedar ABAC ポリシー（ファイル）
+                       authzen-pdp (PDP) ── Cedar ABAC ポリシー（ファイル）
                                │
         decision=true ─▶ context.success()           ─▶ アプリへリダイレクト（許可）
         decision=false ─▶ context.failure(ACCESS_DENIED) ─▶ "access denied" 画面（拒否）
 ```
 
-> このデモの PDP は本リポジトリの `authzen-sidecar` です。`cedar-local-agent` を使い、
+> このデモの PDP は本リポジトリの `authzen-pdp` です。`cedar-local-agent` を使い、
 > **ファイル**（`policies/policies.cedar` + `policies/schema.cedar.json`）からポリシーと
 > スキーマを読み込み、リクエストをスキーマ検証した上で評価します。決定契約は
 > `decision=true`=Cedar Allow（通常ログイン許可）、`decision=false`=Cedar Deny
@@ -72,11 +72,11 @@ when { principal has user_type    && principal.user_type == "partner"
 | Service | Port (host) | 役割 |
 |---------|-------------|------|
 | `keycloak` | http://localhost:8088 | Keycloak 26.1 + AuthZEN authenticator + `authzen-demo` realm のインポート |
-| `authzen-sidecar` | http://localhost:9090 | AuthZEN PDP。`../../policies/` をロード（コンテナ内 `/policies`） |
+| `authzen-pdp` | http://localhost:9090 | AuthZEN PDP。`../../policies/` をロード（コンテナ内 `/policies`） |
 | `app` | http://localhost:9000 | 許可されたときのリダイレクト先（静的ページ） |
 
 > 8088/9090 は Keycloak の 8080 とアプリの 9000 に合わせてずらしています。compose ネットワーク
-> 内では Keycloak は常に `http://authzen-sidecar:9000` で PDP に到達します（realm の
+> 内では Keycloak は常に `http://authzen-pdp:9000` で PDP に到達します（realm の
 > `authzen-config` 参照）。ホストの `9090` は直接 curl で叩くための公開ポートです。
 
 ## 起動
@@ -86,7 +86,7 @@ cd demo/keycloak-authzen
 docker compose up --build
 ```
 
-初回は SPI jar（Maven）と authzen-sidecar イメージをビルドし、realm をインポートします。
+初回は SPI jar（Maven）と authzen-pdp イメージをビルドし、realm をインポートします。
 Keycloak 管理コンソール: http://localhost:8088 (`admin` / `admin`)。
 
 ## ブラウザで試す
@@ -120,7 +120,7 @@ http://localhost:8088/realms/authzen-demo/protocol/openid-connect/auth?client_id
 
 ```shell
 docker compose logs -f keycloak        | grep "AuthZEN"
-docker compose logs -f authzen-sidecar | grep "is_authorized"
+docker compose logs -f authzen-pdp | grep "is_authorized"
 ```
 
 ## PDP に直接 curl して全パターンを確認
@@ -186,13 +186,13 @@ Authenticator はログインごとに次を送信します。
 
 ## ポリシーをライブ編集する
 
-`authzen-sidecar` は**ポリシーファイルをポーリング**して再読込します（PUT API はありません）。
+`authzen-pdp` は**ポリシーファイルをポーリング**して再読込します（PUT API はありません）。
 マウント元の [`../../policies/policies.cedar`](../../policies/policies.cedar) を編集すると、
 `AUTHZ_POLICY_REFRESH_SECS`（このデモでは 15 秒）以内に反映されます。再ビルドは不要です。
 
 ```shell
 # ../../policies/policies.cedar を編集 → 数秒後に反映。リロードはログで確認できる：
-docker compose logs -f authzen-sidecar | grep "policy reloaded"
+docker compose logs -f authzen-pdp | grep "policy reloaded"
 ```
 
 PDP の状態は直接確認できます。
@@ -230,5 +230,5 @@ resource type / fail-open は realm 内の `authzen-config` で設定します�
 - カスタムユーザー属性は realm の **unmanaged attributes** 有効化に依存します
   （インポート realm の user-profile 設定）。
 - `access_route` の IP 分類はデモ用ヒューリスティックです。
-- 本番の `authzen-sidecar` は Keycloak と同一タスク内で `127.0.0.1` バインドする想定です。
+- 本番の `authzen-pdp` は Keycloak と同一タスク内で `127.0.0.1` バインドする想定です。
   このデモでは compose ネットワーク越しに到達させるため `AUTHZ_BIND=0.0.0.0:9000` にしています。

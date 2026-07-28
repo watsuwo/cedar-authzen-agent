@@ -21,7 +21,7 @@
   "containerDefinitions": [
     {
       "name": "authz-sidecar",
-      "image": "<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/authzen-sidecar:0.1.0",
+      "image": "<ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/authzen-pdp:0.1.0",
       "essential": true,
       "readonlyRootFilesystem": true,
       "mountPoints": [
@@ -39,7 +39,7 @@
         { "name": "AUTHZ_LOG_FORMAT", "value": "json" }
       ],
       "healthCheck": {
-        "command": ["CMD", "/usr/local/bin/authzen-sidecar", "health"],
+        "command": ["CMD", "/usr/local/bin/authzen-pdp", "health"],
         "interval": 10,
         "timeout": 3,
         "retries": 3,

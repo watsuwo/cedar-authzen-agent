@@ -85,7 +85,7 @@ public class AuthZenAuthenticatorFactory implements AuthenticatorFactory {
     @Override
     public String getHelpText() {
         return "Performs an AuthZEN access evaluation against an external PDP "
-                + "(authzen-sidecar) at login time and denies the login when the "
+                + "(authzen-pdp) at login time and denies the login when the "
                 + "decision is false.";
     }
 
@@ -94,9 +94,9 @@ public class AuthZenAuthenticatorFactory implements AuthenticatorFactory {
         ProviderConfigProperty pdpUrl = new ProviderConfigProperty(
                 CONFIG_PDP_URL,
                 "PDP base URL",
-                "Base URL of the AuthZEN PDP (authzen-sidecar), e.g. http://authzen-sidecar:9000",
+                "Base URL of the AuthZEN PDP (authzen-pdp), e.g. http://authzen-pdp:9000",
                 ProviderConfigProperty.STRING_TYPE,
-                "http://authzen-sidecar:9000");
+                "http://authzen-pdp:9000");
 
         ProviderConfigProperty action = new ProviderConfigProperty(
                 CONFIG_ACTION,

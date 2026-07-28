@@ -1,6 +1,7 @@
-target
-.git
-DESIGN.md
-README.md
-deploy
-demo
+# 既定ですべて除外し、ビルドに必要なものだけを許可する（許可リスト方式）。
+# こうしておくと新しいファイル／ディレクトリが増えてもビルドコンテキストが太らない。
+*
+
+!Cargo.toml
+!Cargo.lock
+!src

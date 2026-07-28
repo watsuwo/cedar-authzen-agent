@@ -22,7 +22,7 @@ import java.util.LinkedHashMap;
 import java.util.Map;
 
 /**
- * Browser-flow authenticator that asks an AuthZEN PDP (authzen-sidecar) whether
+ * Browser-flow authenticator that asks an AuthZEN PDP (authzen-pdp) whether
  * the authenticated user is allowed to log into the requesting client.
  *
  * <p>The AuthZEN request is built as:
@@ -44,7 +44,7 @@ public class AuthZenAuthenticator implements Authenticator {
             .connectTimeout(Duration.ofSeconds(5))
             .build();
 
-    private static final String DEFAULT_PDP_URL = "http://authzen-sidecar:9000";
+    private static final String DEFAULT_PDP_URL = "http://authzen-pdp:9000";
     private static final String DEFAULT_ACTION = "login";
     private static final String DEFAULT_RESOURCE_TYPE = "Client";
 

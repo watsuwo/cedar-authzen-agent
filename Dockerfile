@@ -1,32 +1,47 @@
 # syntax=docker/dockerfile:1
-#
-# Multi-stage build for authzen-sidecar (DESIGN.md §11).
-# Build on glibc (Debian) and run on distroless/cc (glibc + libgcc, nonroot).
-# No native TLS / aws-sdk deps, so the image stays small.
-#
-# Build for the target Fargate architecture, e.g.:
-#   docker buildx build --platform linux/amd64 -t <ecr>/authzen-sidecar:0.1.0 --push .
 
-# ---- builder ----
-FROM rust:1-bookworm AS builder
+ARG RUST_VERSION=1.89
+ARG DEBIAN_RELEASE=bookworm
+ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian12:nonroot
+
+# cargo-chefを利用する
+FROM lukemathwalker/cargo-chef:latest-rust-${RUST_VERSION}-slim-${DEBIAN_RELEASE} AS chef
 WORKDIR /build
 
-# Pre-build dependencies first for better layer caching.
-COPY Cargo.toml Cargo.lock ./
-RUN mkdir -p src \
-    && echo 'fn main() {}' > src/main.rs \
-    && cargo build --release \
-    && rm -rf src
+# cargo-chef用のrecipe.jsonを作成
+FROM chef AS planner
+RUN --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
+    --mount=type=bind,source=Cargo.lock,target=Cargo.lock \
+    --mount=type=bind,source=src,target=src \
+    cargo chef prepare --recipe-path /recipe.json
 
-# Build the real binary.
-COPY src ./src
-RUN touch src/main.rs && cargo build --release
+# 依存関係のビルド
+FROM chef AS builder
+COPY --from=planner /recipe.json recipe.json
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/build/target,sharing=locked \
+    cargo chef cook --release --locked --recipe-path recipe.json
 
-# ---- runtime ----
-FROM gcr.io/distroless/cc-debian12:nonroot
-COPY --from=builder /build/target/release/authzen-sidecar /usr/local/bin/authzen-sidecar
+# アプリケーションのビルド
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/build/target,sharing=locked \
+    --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
+    --mount=type=bind,source=Cargo.lock,target=Cargo.lock \
+    --mount=type=bind,source=src,target=src \
+    cargo build --release --locked --bin authzen-pdp \
+    && install -D target/release/authzen-pdp /out/authzen-pdp
 
-# Policies + schema are supplied at runtime via the S3 Files mount (/mnt/s3files).
-# Bind defaults to 127.0.0.1:9000 (localhost-only; reached by Keycloak over the
-# shared awsvpc network namespace — DESIGN.md §9).
-ENTRYPOINT ["/usr/local/bin/authzen-sidecar"]
+# ユニットテスト
+FROM builder AS test
+RUN --mount=type=cache,target=/usr/local/cargo/registry,sharing=locked \
+    --mount=type=cache,target=/build/target,sharing=locked \
+    --mount=type=bind,source=Cargo.toml,target=Cargo.toml \
+    --mount=type=bind,source=Cargo.lock,target=Cargo.lock \
+    --mount=type=bind,source=src,target=src \
+    cargo test --release --locked
+
+# 起動
+FROM ${RUNTIME_IMAGE} AS runtime
+COPY --from=builder /out/authzen-pdp /usr/local/bin/authzen-pdp
+EXPOSE 9000
+ENTRYPOINT ["/usr/local/bin/authzen-pdp"]

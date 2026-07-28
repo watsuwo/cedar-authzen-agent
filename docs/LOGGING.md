@@ -1,6 +1,6 @@
 # ログ仕様（運用向け）
 
-authzen-sidecar（AuthZEN PDP）が出力するログの一覧と、運用での使い方をまとめる。
+authzen-pdp（AuthZEN PDP）が出力するログの一覧と、運用での使い方をまとめる。
 コードは `src/`、設計は `DESIGN.md` を参照。
 
 ---
@@ -19,7 +19,7 @@ authzen-sidecar（AuthZEN PDP）が出力するログの一覧と、運用での
 
 | 系統 | target（接頭辞） | 内容 |
 |---|---|---|
-| アプリログ | `authzen_sidecar`, `authzen_sidecar::handlers` | 本サイドカー自身のログ（本資料の中心） |
+| アプリログ | `authzen_pdp`, `authzen_pdp::handlers` | 本サイドカー自身のログ（本資料の中心） |
 | ライブラリ/監査ログ | `cedar_local_agent::*`, `cedar::simple::authorizer` | cedar-local-agent が出すログと OCSF 監査レコード |
 
 > 注: アプリログのメッセージは英語（grep 容易性・ログ基盤との親和性のため）。
@@ -45,13 +45,13 @@ AUTHZ_LOG_FORMAT=json
 
 ## 3. アプリログ一覧
 
-`target` 列の `…` は `authzen_sidecar`。フィールドは JSON 形式時のキー。
+`target` 列の `…` は `authzen_pdp`。フィールドは JSON 形式時のキー。
 
 ### 3.1 起動・ライフサイクル
 
 | レベル | target | メッセージ（先頭一致） | 出力タイミング | 運用上の意味 / 対応 |
 |---|---|---|---|---|
-| INFO | … | `starting authzen-sidecar: bind=… policy=… schema=… refresh=…` | プロセス起動直後 | 解決済みの設定値。**意図した policy/schema パス・bind か確認**。 |
+| INFO | … | `starting authzen-pdp: bind=… policy=… schema=… refresh=…` | プロセス起動直後 | 解決済みの設定値。**意図した policy/schema パス・bind か確認**。 |
 | INFO | … | `loaded and validated policy set: N policies` | 起動時のスキーマ検証成功後 | ロードできたポリシー文の件数。**想定件数と一致するか確認**（マウント取り違え検知）。 |
 | INFO | … | `listening on http://ADDR` | 受付開始 | ここまで出れば受付可能。 |
 | ERROR | … | `fatal: …`（同文を stderr にも出力） | 起動失敗・致命的エラーで終了する直前 | 設定不正・schema/policy 不正・bind 失敗など。**プロセスは異常終了**。要修正。 |
@@ -80,7 +80,7 @@ AUTHZ_LOG_FORMAT=json
 | 項目 | 値 |
 |---|---|
 | レベル | INFO |
-| target | `authzen_sidecar::handlers` |
+| target | `authzen_pdp::handlers` |
 | メッセージ | `access evaluation completed` |
 
 フィールド:
@@ -103,7 +103,7 @@ JSON 例:
   "subject":"User::alice","action":"login","resource":"Client::a-client",
   "decision":"deny","external_auth_forced":true,
   "determining_policies":"a-client-deny","latency_ms":0
-},"target":"authzen_sidecar::handlers"}
+},"target":"authzen_pdp::handlers"}
 ```
 
 #### その他の評価ログ

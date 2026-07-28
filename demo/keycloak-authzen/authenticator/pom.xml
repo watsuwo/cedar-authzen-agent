@@ -12,7 +12,7 @@
     <name>Keycloak AuthZEN Access Evaluation Authenticator</name>
     <description>
         Keycloak browser-flow Authenticator that performs an AuthZEN access
-        evaluation against an external PDP (authzen-sidecar) at login time.
+        evaluation against an external PDP (authzen-pdp) at login time.
     </description>
 
     <properties>

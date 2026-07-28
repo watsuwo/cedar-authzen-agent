@@ -16,7 +16,7 @@
 管理者 --PutObject--> S3 バケット --(S3 Event)--> S3 Files が常駐ファイルを更新
                                                           │ read（普通のファイル）
                                                           ▼
-                                            authzen-sidecar (PDP)
+                                            authzen-pdp (PDP)
                                             file_inspector_task が変更検知 → reload
 ```
 
@@ -30,7 +30,7 @@ PDP は **ストレージ非依存**で、ただのファイルパス（`AUTHZ_P
 | S3 Files（NFS マウント） | **policy-projector**（`mc mirror --watch`） | S3 → 常駐ファイルへの射影 |
 | S3 Event 反映 + ポーリング | `--watch` + `AUTHZ_POLICY_REFRESH_SECS` | 更新の伝播 |
 | 常駐ファイル `/mnt/s3files/...` | 共有ボリューム `policy-store:/policystore` | PDP が read するファイル |
-| authzen-sidecar | **authzen-sidecar**（同一バイナリ・同一 env） | PDP 本体（差分なし） |
+| authzen-pdp | **authzen-pdp**（同一バイナリ・同一 env） | PDP 本体（差分なし） |
 
 PDP のコード・設定は本番と同じ。**違うのは「読むファイルが S3 射影先である」ことだけ**。
 
@@ -43,7 +43,7 @@ services:
   minio            … ローカル S3 互換ストア（コンソール :9001 / S3 API :9101）
   minio-setup      … 一度だけ: バケット作成 + Versioning 有効化 + 初期ポリシー投入
   policy-projector … mc mirror --watch でバケット→/policystore へ射影し続ける
-  authzen-sidecar  … /policystore のファイルを読む PDP（:9090 で公開）
+  authzen-pdp  … /policystore のファイルを読む PDP（:9090 で公開）
 ```
 
 初期ポリシー/スキーマはリポジトリの `../../policies/` を投入する。
@@ -71,7 +71,7 @@ docker compose up -d --build
 
 ```sh
 docker compose ps
-# authzen-sidecar / policy-projector が healthy になっていれば OK
+# authzen-pdp / policy-projector が healthy になっていれば OK
 ```
 
 ---
@@ -126,7 +126,7 @@ curl -s localhost:9090/access/v1/evaluation -H 'content-type: application/json' 
 # => {"decision":true}  ← ホットリロードされた
 
 # PDP のリロードログ
-docker compose logs authzen-sidecar | grep -i reload
+docker compose logs authzen-pdp | grep -i reload
 ```
 
 > **不正なポリシーを put した場合**: PDP はスキーマ検証で却下し、**直前の正常な
@@ -158,6 +158,6 @@ docker compose down -v   # コンテナ + ボリューム（MinIO データ・�
 
 `demo/keycloak-authzen/` は現在 `../../policies` を直接バインドマウントしている。
 そちらの PDP をこの「S3 射影先」に向けたい場合は、keycloak 側 compose の
-`authzen-sidecar` の `volumes` を `policy-store:/policystore:ro` に、`AUTHZ_*_PATH` を
+`authzen-pdp` の `volumes` を `policy-store:/policystore:ro` に、`AUTHZ_*_PATH` を
 `/policystore/...` に変更し、本デモの `minio` / `minio-setup` / `policy-projector` を
 同じ compose（または外部ネットワーク共有）に取り込めばよい。

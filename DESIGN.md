@@ -267,7 +267,7 @@ when {
 ### 3.1 コード配置（確定）
 
 - **独立バイナリ crate に昇格**し、ライブラリとは分離する。リポジトリ直下に
-  `authzen-sidecar/`（package 名 `authzen-sidecar`）を置く（`examples/` 配下ではない）。
+  `authzen-pdp/`（package 名 `authzen-pdp`）を置く（`examples/` 配下ではない）。
 - **依存は crates.io 公開版** `cedar-local-agent = "3"`（path 依存ではない）。ライブラリは
   改変せず as-is で利用するため結合を避け、将来の別リポジトリ分離もしやすくする。
 - プロトタイプ `examples/authzen-server/`（`main.rs` / `authzen.rs` / `convert.rs`）を新 crate の
@@ -392,7 +392,7 @@ PDP はストレージ非依存（ただのファイルパスを read）なの�
 
 - **MinIO** = S3 バケットの代役（Versioning 有効化）。
 - **`mc mirror --watch`** の射影プロセス = S3 Files（バケット → 常駐ファイルへの射影）の代役。
-- **authzen-sidecar** は本番と同一バイナリ・同一 env で、射影先ファイルを read するだけ。
+- **authzen-pdp** は本番と同一バイナリ・同一 env で、射影先ファイルを read するだけ。
 
 「MinIO に PutObject → 射影 → `file_inspector_task` が検知 → ホットリロード」という本番と
 同じ更新フローを実演できる（手順は同ディレクトリの README）。
@@ -481,7 +481,7 @@ schema は採用（§13）。`User`/`Client`/アクション/属性を定義し�
     **リロード成否を共有フラグに記録する自前更新ループ**を設け、`/readyz` から参照する。
     このループが反映前に `Validator` でストリクト検証も行う（§7）。
 - **ECS コンテナ `healthCheck` = self `health` サブコマンド**: distroless はシェル無のため
-  `["CMD", "/authzen-sidecar", "health"]` でバイナリ自身が localhost を叩く。追加依存なし。
+  `["CMD", "/authzen-pdp", "health"]` でバイナリ自身が localhost を叩く。追加依存なし。
   Keycloak の `dependsOn: HEALTHY` で起動順を制御。
   - 注意: container `healthCheck` を `/readyz` に紐付けると、**不正ポリシー更新で not ready →
     コンテナ再起動 → 起動時 fail-fast でクラッシュループ**の恐れ。回避するなら healthCheck は
@@ -497,7 +497,7 @@ schema は採用（§13）。`User`/`Client`/アクション/属性を定義し�
 / [`deploy/README.md`](./deploy/README.md)。
 
 - **Dockerfile**: マルチステージ。glibc(Debian)でビルドし `gcr.io/distroless/cc-debian12:nonroot`
-  で実行。`aws-sdk` 不要でバイナリは軽量。`ENTRYPOINT` は `authzen-sidecar`。
+  で実行。`aws-sdk` 不要でバイナリは軽量。`ENTRYPOINT` は `authzen-pdp`。
 - 単一 ECS タスク定義に `keycloak` と `authz-sidecar` の2コンテナ。`awsvpc` ネットワーク
   → Keycloak は `127.0.0.1:9000` でサイドカーに到達。
 - **S3 Files ボリューム**（ECS の `s3filesVolumeConfiguration`）をタスクに定義し、
@@ -507,7 +507,7 @@ schema は採用（§13）。`User`/`Client`/アクション/属性を定義し�
   - **Fargate / ECS Managed Instances 限定**（EC2 起動タイプ不可）。mount target が同一 VPC・
     available、SG で NFS 2049 許可、リンク先バケットは Versioning 有効（§5）。
 - `authz-sidecar` は `readonlyRootFilesystem: true`。container `healthCheck` は
-  `["CMD","/usr/local/bin/authzen-sidecar","health"]`（`/healthz` を叩く, §10）。
+  `["CMD","/usr/local/bin/authzen-pdp","health"]`（`/healthz` を叩く, §10）。
   Keycloak は `dependsOn: { authz-sidecar: HEALTHY }` で起動順を制御。
 - 設定は環境変数（SSM Parameter Store / Secrets Manager 参照可）。
 - ログは awslogs ドライバ → CloudWatch（`AUTHZ_LOG_FORMAT=json`）。
@@ -556,7 +556,7 @@ schema は採用（§13）。`User`/`Client`/アクション/属性を定義し�
   リロード時は反映前に検証し不合格なら旧ポリシー維持＋not-ready。`PolicySetProvider` の構文検証に上乗せ。
 - **判定の向き: `Deny`（`forbid` 一致）= 外部認証連携を強制**（§2.1, §2.3）。
 - **属性欠落はサイドカーで弾かない**（付与は Keycloak 側で担保, §4 ④, §8）。
-- **コード配置: 独立バイナリ crate `authzen-sidecar/`**（crates.io の `cedar-local-agent = "3"` 依存, §3.1）。
+- **コード配置: 独立バイナリ crate `authzen-pdp/`**（crates.io の `cedar-local-agent = "3"` 依存, §3.1）。
 - **ポリシーレイアウト: MVP は単一 `policies.cedar`、将来の複数ファイル化を見越して loader を抽象化**（§5.2）。
 - **schema あり**: `User`/`Client`/アクション/属性を定義し、convert 層で入力を schema 検証 → 不正は 400（§4 ③, §8）。
 - **エラー本文 = 最小 JSON** `{"error": "...", "message": "..."}`（§8）。

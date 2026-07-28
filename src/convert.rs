@@ -4,7 +4,7 @@ use cedar_policy::{
     Context, Entities, EntityId, EntityTypeName, EntityUid, Policy, PolicyId, PolicySet, Request,
     Schema,
 };
-use serde_json::{json, Map, Value};
+use serde_json::{Map, Value, json};
 use thiserror::Error;
 use tracing::warn;
 

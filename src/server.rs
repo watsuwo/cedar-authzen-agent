@@ -1,7 +1,7 @@
 use std::sync::Arc;
 
-use axum::routing::{get, post};
 use axum::Router;
+use axum::routing::{get, post};
 use tracing::info;
 
 use cedar_local_agent::public::file::entity_provider::EntityProvider;
@@ -9,7 +9,7 @@ use cedar_local_agent::public::file::policy_set_provider::PolicySetProvider;
 use cedar_local_agent::public::simple::{Authorizer, AuthorizerConfigBuilder};
 
 use crate::config::Config;
-use crate::state::{AppState, Readiness, SidecarAuthorizer};
+use crate::state::{AppState, PdpAuthorizer, Readiness};
 use crate::{handlers, policy, telemetry};
 
 /// 設定読み込みからポリシー検証、HTTP サーバ起動までのライフサイクルを実行する。
@@ -18,7 +18,7 @@ pub async fn run() -> Result<(), crate::Error> {
 
     let cfg = Config::from_env()?;
     info!(
-        "starting authzen-sidecar: bind={} policy={} schema={} refresh={:?}",
+        "starting authzen-pdp: bind={} policy={} schema={} refresh={:?}",
         cfg.bind, cfg.policy_path, cfg.schema_path, cfg.refresh
     );
 
@@ -60,9 +60,7 @@ pub async fn run() -> Result<(), crate::Error> {
 }
 
 /// ポリシー provider を束ねた Cedar オーソライザを生成する。
-fn new_authorizer(
-    provider: Arc<PolicySetProvider>,
-) -> Result<Arc<SidecarAuthorizer>, crate::Error> {
+fn new_authorizer(provider: Arc<PolicySetProvider>) -> Result<Arc<PdpAuthorizer>, crate::Error> {
     let config = AuthorizerConfigBuilder::default()
         .policy_set_provider(provider)
         // リクエストから属性値を取得するので、EntityProvider は空でよい
