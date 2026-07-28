@@ -7,7 +7,6 @@ mod health;
 mod policy;
 mod server;
 mod state;
-mod telemetry;
 
 use std::process::ExitCode;
 

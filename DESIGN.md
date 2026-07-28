@@ -410,7 +410,6 @@ PDP はストレージ非依存（ただのファイルパスを read）なの�
 | `AUTHZ_SCHEMA_PATH` | （必須） | schema、例 `/mnt/s3files/schema.cedar.json`（§4 ③, §8） |
 | `AUTHZ_POLICY_REFRESH_SECS` | `30` | ファイル差分ポーリング間隔（>=15） |
 | `AUTHZ_REQUEST_BODY_LIMIT` | `64KiB` | リクエストボディ上限（DoS 緩和） |
-| `AUTHZ_LOG_FORMAT` | `json` | アプリログ形式 |
 | `AUTHZ_OCSF_LOG` | `stdout` | OCSF 認可ログの出力先（ECS は stdout→CloudWatch） |
 
 S3 アクセスはファイルシステム経由のため `AWS_REGION` 等の SDK 変数は不要。
@@ -510,7 +509,7 @@ schema は採用（§13）。`User`/`Client`/アクション/属性を定義し�
   `["CMD","/usr/local/bin/authzen-pdp","health"]`（`/healthz` を叩く, §10）。
   Keycloak は `dependsOn: { authz-sidecar: HEALTHY }` で起動順を制御。
 - 設定は環境変数（SSM Parameter Store / Secrets Manager 参照可）。
-- ログは awslogs ドライバ → CloudWatch（`AUTHZ_LOG_FORMAT=json`）。
+- ログは awslogs ドライバ → CloudWatch（アプリログは常時 JSON）。
 
 ---
 
@@ -582,7 +581,7 @@ schema は採用（§13）。`User`/`Client`/アクション/属性を定義し�
 
 MVP 実装（`src/`）の現行処理を 3 つの主要フローで示す。モジュール構成は
 `main` / `server` / `config` / `policy` / `convert` / `handlers` / `error` /
-`state` / `telemetry` / `health` / `authzen`（§3 のレイヤ構成に対応）。
+`state` / `health` / `authzen`（§3 のレイヤ構成に対応）。
 
 ### 14.1 起動フロー（`main` → `server::run`）
 
@@ -596,7 +595,7 @@ flowchart TD
     B -- No --> C[Tokio マルチスレッド<br/>ランタイム構築]
     C --> D[server::run]
 
-    D --> E[telemetry::init<br/>tracing 初期化<br/>AUTHZ_LOG_FORMAT=json 尊重]
+    D --> E[tracing 初期化<br/>JSON 固定・レベルは RUST_LOG]
     E --> F[Config::from_env<br/>bind/policy/schema/refresh/body_limit<br/>§6]
     F --> G[policy::load_schema<br/>スキーマ JSON をパース]
     G --> I[policy::new_provider<br/>PolicySetProvider 構築＝構文検証のみ]

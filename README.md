@@ -54,7 +54,6 @@ naming, per-action `decision` meaning, and how to add new use cases) is covered 
 | `AUTHZ_SCHEMA_PATH` | (required) | Cedar schema JSON |
 | `AUTHZ_POLICY_REFRESH_SECS` | `30` | Policy file poll interval (min 15) |
 | `AUTHZ_REQUEST_BODY_LIMIT` | `65536` | Max request body bytes |
-| `AUTHZ_LOG_FORMAT` | (text) | `json` for JSON logs |
 
 ## Run locally
 
