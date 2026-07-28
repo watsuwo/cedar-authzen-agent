@@ -1,6 +1,6 @@
 # syntax=docker/dockerfile:1
 
-ARG RUST_VERSION=1.89
+ARG RUST_VERSION=1.97.1
 ARG DEBIAN_RELEASE=bookworm
 ARG RUNTIME_IMAGE=gcr.io/distroless/cc-debian12:nonroot
 
