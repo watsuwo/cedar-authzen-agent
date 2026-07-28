@@ -1,12 +1,12 @@
-use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, Ordering};
 
 use cedar_local_agent::public::file::entity_provider::EntityProvider;
 use cedar_local_agent::public::file::policy_set_provider::PolicySetProvider;
 use cedar_local_agent::public::simple::Authorizer;
 use cedar_policy::Schema;
 
-pub type SidecarAuthorizer = Authorizer<PolicySetProvider, EntityProvider>;
+pub type PdpAuthorizer = Authorizer<PolicySetProvider, EntityProvider>;
 
 /// `/readyz` が参照する準備状態。ポリシー再読み込みタスクと共有する。
 #[derive(Clone)]
@@ -28,7 +28,7 @@ impl Readiness {
 
 #[derive(Clone)]
 pub struct AppState {
-    pub authorizer: Arc<SidecarAuthorizer>,
+    pub authorizer: Arc<PdpAuthorizer>,
     pub provider: Arc<PolicySetProvider>,
     pub schema: Arc<Schema>,
     pub readiness: Readiness,

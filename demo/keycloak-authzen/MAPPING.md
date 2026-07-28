@@ -1,6 +1,6 @@
 # AuthZEN ⇄ Cedar マッピング定義一覧
 
-このデモで Keycloak Authenticator が送る **AuthZEN リクエスト**が、`authzen-sidecar` 内で
+このデモで Keycloak Authenticator が送る **AuthZEN リクエスト**が、`authzen-pdp` 内で
 どのように **Cedar の `principal` / `action` / `resource` / `context`** に変換され、
 [`../../policies/policies.cedar`](../../policies/policies.cedar) のポリシーで評価されるかを
 まとめる。
@@ -27,7 +27,7 @@
 > **リクエストの context レコード**になり、`context.access_route` で参照する。同じ「属性」でも
 > 参照経路（`principal.X` vs `context.X`）が異なる点に注意。
 >
-> **スキーマ検証:** `authzen-sidecar` は principal / resource 属性も `context` も
+> **スキーマ検証:** `authzen-pdp` は principal / resource 属性も `context` も
 > `schema.cedar.json` で検証する。スキーマに無いエンティティ型・アクション・属性は
 > **HTTP 400** で拒否される（このため `login` アクションの context に `access_route` と
 > `ip` を任意属性として宣言している）。
@@ -61,7 +61,7 @@ Authenticator が `alice` で `a-client` にインターネット経由でログ
 }
 ```
 
-`authzen-sidecar` 内での評価対象:
+`authzen-pdp` 内での評価対象:
 
 | 役割 | Cedar 値 |
 |---|---|

@@ -1,4 +1,4 @@
-# Deploy: authzen-sidecar on ECS (Keycloak sidecar)
+# Deploy: authzen-pdp on ECS (Keycloak sidecar)
 
 Artifacts:
 
@@ -13,7 +13,7 @@ See [`../DESIGN.md`](../DESIGN.md) §11 / §5 for the design rationale.
 ```bash
 # Match the Fargate CPU architecture (linux/amd64 or linux/arm64).
 docker buildx build --platform linux/amd64 \
-  -t <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/authzen-sidecar:0.1.0 \
+  -t <ACCOUNT_ID>.dkr.ecr.<REGION>.amazonaws.com/authzen-pdp:0.1.0 \
   --push .
 ```
 
@@ -47,7 +47,7 @@ Mounted into `authz-sidecar` at `/mnt/s3files` **read-only**.
 
 - `awsvpc` network → Keycloak reaches the sidecar over `127.0.0.1:9000`.
 - Keycloak `dependsOn` the sidecar being `HEALTHY` (container `healthCheck` runs
-  `authzen-sidecar health`, which probes `/healthz`).
+  `authzen-pdp health`, which probes `/healthz`).
 - A custom Keycloak Authenticator calls `POST /access/v1/evaluation`; a
   `{"decision": false}` means **force external authentication** (DESIGN.md §2.1).
 

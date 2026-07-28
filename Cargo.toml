@@ -1,13 +1,9 @@
 [package]
-name = "authzen-sidecar"
-edition = "2021"
+name = "authzen-pdp"
+edition = "2024"
+rust-version = "1.89"
 version = "0.1.0"
 publish = false
-description = "AuthZEN-compliant authorization sidecar (PDP) backed by cedar-local-agent, for Keycloak external-auth enforcement."
-
-[[bin]]
-name = "authzen-sidecar"
-path = "src/main.rs"
 
 [lints.rust]
 unsafe_code = "forbid"
@@ -15,17 +11,15 @@ unsafe_code = "forbid"
 [lints.clippy]
 all = { level = "warn", priority = -1 }
 pedantic = { level = "warn", priority = -1 }
-# 「AuthZEN」等の固有名詞を Rust の item 名と誤検知するため無効化
 doc_markdown = "allow"
 
 [dependencies]
-# Cedar local authorizer (published crate, not a path dependency — see DESIGN.md §3.1)
 cedar-local-agent = "3"
 cedar-policy = "4.2"
 
 # Async runtime + HTTP server
-tokio = { version = "1", features = ["full"] }
-axum = "0.7"
+tokio = { version = "1", features = ["rt-multi-thread", "net", "signal"] }
+axum = "0.8"
 
 # Serde
 serde = { version = "1", features = ["derive"] }
@@ -37,5 +31,15 @@ tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
 
 [dev-dependencies]
-# ポリシー/スキーマの読み込み系テストで使う一時ファイル
 tempfile = "3"
+
+[profile.release]
+opt-level = 3            # 最大限の最適化を行う
+lto = "fat"              # Link Time Optimization を有効にしてリンク時最適化を強化
+codegen-units = 1        # コード生成単位を1にして、インライン化の機会を増やす
+strip = "symbols"        # シンボル情報を削除してバイナリサイズを最小化
+
+[profile.dev]
+opt-level = 0            # 最適化を最小限にしてコンパイル時間を短縮
+debug = true             # デバッグ情報を付与
+incremental = true       # インクリメンタルコンパイルを有効化

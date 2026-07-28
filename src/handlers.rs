@@ -1,9 +1,9 @@
 use std::time::Instant;
 
+use axum::Json;
 use axum::body::Bytes;
 use axum::extract::State;
-use axum::http::{header, HeaderMap, StatusCode};
-use axum::Json;
+use axum::http::{HeaderMap, StatusCode, header};
 use cedar_local_agent::public::SimplePolicySetProvider;
 use cedar_policy::{Decision, Entities, PolicyId, PolicySet, Request, Response, Schema};
 use tracing::{error, info, warn};

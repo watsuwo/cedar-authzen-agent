@@ -2,9 +2,9 @@ use std::str::FromStr;
 use std::sync::Arc;
 use std::time::Duration;
 
-use cedar_local_agent::public::events::core::{file_inspector_task, RefreshRate};
-use cedar_local_agent::public::file::policy_set_provider::{self, PolicySetProvider};
 use cedar_local_agent::public::UpdateProviderData;
+use cedar_local_agent::public::events::core::{RefreshRate, file_inspector_task};
+use cedar_local_agent::public::file::policy_set_provider::{self, PolicySetProvider};
 use cedar_policy::{PolicySet, Schema, ValidationMode, Validator};
 use thiserror::Error;
 use tracing::{error, info};

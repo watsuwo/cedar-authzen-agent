@@ -1,4 +1,4 @@
-# authzen-sidecar
+# authzen-pdp
 
 An [OpenID AuthZEN](https://openid.github.io/authzen/) Authorization API server
 (Policy Decision Point) backed by [`cedar-local-agent`](https://crates.io/crates/cedar-local-agent).
@@ -91,7 +91,7 @@ curl -s localhost:9000/access/v1/evaluation \
 For container `healthCheck` in distroless images (no shell/curl):
 
 ```
-authzen-sidecar health   # exits 0 if /healthz returns 200, else 1
+authzen-pdp health   # exits 0 if /healthz returns 200, else 1
 ```
 
 <br>

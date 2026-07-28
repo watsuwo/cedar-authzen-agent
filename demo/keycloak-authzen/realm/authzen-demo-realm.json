@@ -131,7 +131,7 @@
     {
       "alias": "authzen-config",
       "config": {
-        "pdpUrl": "http://authzen-sidecar:9000",
+        "pdpUrl": "http://authzen-pdp:9000",
         "action": "login",
         "resourceType": "Client",
         "failOpen": "false"

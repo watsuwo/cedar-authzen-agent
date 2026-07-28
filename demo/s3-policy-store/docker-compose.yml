@@ -8,7 +8,7 @@
 # ローカルでは FUSE 権限なしで同じ振る舞いを再現するため、次の3つで構成する:
 #   1) minio            … ローカルの S3 互換オブジェクトストア（= S3 の代役）
 #   2) policy-projector … バケットを共有ボリュームのファイルへ射影（= S3 Files の代役）
-#   3) authzen-sidecar  … 射影されたファイルを読む PDP（本番と同じバイナリ・同じ設定）
+#   3) authzen-pdp  … 射影されたファイルを読む PDP（本番と同じバイナリ・同じ設定）
 #
 # これで「MinIO にポリシーを put → ファイルへ射影 → PDP がホットリロード」を実演できる。
 # 詳細・手順は README.md を参照。
@@ -79,7 +79,7 @@ services:
       retries: 10
 
   # 4) PDP 本体。本番と同じイメージ・同じ env。違いは「読むファイルが S3 射影先」だけ。
-  authzen-sidecar:
+  authzen-pdp:
     build:
       context: ../../
       dockerfile: Dockerfile
@@ -101,7 +101,7 @@ services:
     restart: unless-stopped
     healthcheck:
       # distroless のためシェル/curl が無い。バイナリの health サブコマンドで /healthz を叩く。
-      test: ["CMD", "/usr/local/bin/authzen-sidecar", "health"]
+      test: ["CMD", "/usr/local/bin/authzen-pdp", "health"]
       interval: 10s
       timeout: 3s
       retries: 5
