@@ -92,7 +92,6 @@ services:
       AUTHZ_SCHEMA_PATH: /policystore/schema.cedar.json
       AUTHZ_POLICY_REFRESH_SECS: "15"   # ローカルの最小許容値（DESIGN.md §6）
       RUST_LOG: "info,cedar_local_agent=warn"
-      AUTHZ_LOG_FORMAT: json
     volumes:
       # 射影先は read-only でマウント（PDP は書き込まない＝本番の read 専用と同じ）。
       - policy-store:/policystore:ro

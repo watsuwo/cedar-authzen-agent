@@ -3,6 +3,7 @@ use std::sync::Arc;
 use axum::Router;
 use axum::routing::{get, post};
 use tracing::info;
+use tracing_subscriber::EnvFilter;
 
 use cedar_local_agent::public::file::entity_provider::EntityProvider;
 use cedar_local_agent::public::file::policy_set_provider::PolicySetProvider;
@@ -10,15 +11,20 @@ use cedar_local_agent::public::simple::{Authorizer, AuthorizerConfigBuilder};
 
 use crate::config::Config;
 use crate::state::{AppState, PdpAuthorizer, Readiness};
-use crate::{handlers, policy, telemetry};
+use crate::{handlers, policy};
 
 /// 設定読み込みからポリシー検証、HTTP サーバ起動までのライフサイクルを実行する。
 pub async fn run() -> Result<(), crate::Error> {
-    telemetry::init();
+    tracing_subscriber::fmt()
+        .with_env_filter(
+            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+        )
+        .json()
+        .init();
 
     let cfg = Config::from_env()?;
     info!(
-        "starting authzen-pdp: bind={} policy={} schema={} refresh={:?}",
+        "starting: bind={} policy={} schema={} refresh={:?}",
         cfg.bind, cfg.policy_path, cfg.schema_path, cfg.refresh
     );
 

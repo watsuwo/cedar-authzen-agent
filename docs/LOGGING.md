@@ -7,12 +7,10 @@ authzen-pdp（AuthZEN PDP）が出力するログの一覧と、運用での使�
 
 ## 1. ロギング基盤
 
-- **実装**: [`tracing`] + `tracing-subscriber`（`src/main.rs::init_tracing`）。
+- **実装**: [`tracing`] + `tracing-subscriber`（`src/server.rs::run` 冒頭で初期化）。
 - **出力先**: 標準出力（stdout）。コンテナログとして収集する想定。
-- **フォーマット**:
-  - 既定 … 人間可読のテキスト形式。
-  - `AUTHZ_LOG_FORMAT=json` … 1 行 1 JSON。**本番ではこちらを推奨**（ログ基盤での
-    フィールド検索が容易）。
+- **フォーマット**: **1 行 1 JSON 固定**（ログ基盤でのフィールド検索を優先）。切り替えは行わない。
+  ローカルで人間可読にしたい場合は `jq` 等を通す（例: `cargo run | jq -r '.fields.message'`）。
 - **レベル/フィルタ**: 環境変数 `RUST_LOG`（`EnvFilter`）で制御。未設定時は `info`。
 
 ログには大きく 2 系統ある。
@@ -32,7 +30,6 @@ authzen-pdp（AuthZEN PDP）が出力するログの一覧と、運用での使�
 ```sh
 # 本番推奨: アプリログ + OCSF 監査は残し、ライブラリの冗長な INFO は抑制
 RUST_LOG="info,cedar_local_agent=warn"
-AUTHZ_LOG_FORMAT=json
 ```
 
 - `cedar_local_agent=warn` … リクエストごとに出る `Received request...` 等の
@@ -148,7 +145,7 @@ JSON 例:
 
 ## 5. 運用レシピ（jq 例）
 
-JSON ログ前提。`LOG` は収集済みログファイルとする。
+`LOG` は収集済みログファイルとする。
 
 ```sh
 # 外部認証が強制されたログインを抽出
@@ -183,6 +180,6 @@ jq 'select(.fields.message=="access evaluation completed") | .fields.latency_ms'
 
 - 設計: `DESIGN.md`（§2 API、§7 リロード、§8 エラー、§10 ヘルス/レディネス）
 - 設定: `src/config.rs`（`AUTHZ_*` 環境変数）
-- 実装: `src/handlers.rs`（評価/判定ログ）, `src/main.rs`（起動/リロード）
+- 実装: `src/handlers.rs`（評価/判定ログ）, `src/server.rs`（tracing 初期化・起動）, `src/policy.rs`（リロード）
 
 [`tracing`]: https://docs.rs/tracing
