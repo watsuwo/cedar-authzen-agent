@@ -12,6 +12,7 @@ use crate::config::Config;
 use crate::state::{AppState, Readiness, SidecarAuthorizer};
 use crate::{handlers, policy, telemetry};
 
+/// 設定読み込みからポリシー検証、HTTP サーバ起動までのライフサイクルを実行する。
 pub async fn run() -> Result<(), crate::Error> {
     telemetry::init();
 
@@ -58,6 +59,7 @@ pub async fn run() -> Result<(), crate::Error> {
     Ok(())
 }
 
+/// ポリシー provider を束ねた Cedar オーソライザを生成する。
 fn new_authorizer(
     provider: Arc<PolicySetProvider>,
 ) -> Result<Arc<SidecarAuthorizer>, crate::Error> {
@@ -70,6 +72,7 @@ fn new_authorizer(
     Ok(Arc::new(Authorizer::new(config)))
 }
 
+/// エンドポイントを束ねたルータを組み立てる。
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/access/v1/evaluation", post(handlers::evaluate))
@@ -82,7 +85,7 @@ fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-// SIGTERMを受信すると終了させる
+/// SIGTERM を受信するまで待機する。受信後に graceful shutdown が始まる。
 async fn shutdown_signal() {
     #[cfg(unix)]
     match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {
