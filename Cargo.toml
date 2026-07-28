@@ -9,6 +9,15 @@ description = "AuthZEN-compliant authorization sidecar (PDP) backed by cedar-loc
 name = "authzen-sidecar"
 path = "src/main.rs"
 
+[lints.rust]
+unsafe_code = "forbid"
+
+[lints.clippy]
+all = { level = "warn", priority = -1 }
+pedantic = { level = "warn", priority = -1 }
+# 「AuthZEN」等の固有名詞を Rust の item 名と誤検知するため無効化
+doc_markdown = "allow"
+
 [dependencies]
 # Cedar local authorizer (published crate, not a path dependency — see DESIGN.md §3.1)
 cedar-local-agent = "3"
@@ -26,3 +35,7 @@ serde_json = "1"
 thiserror = "2"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+
+[dev-dependencies]
+# ポリシー/スキーマの読み込み系テストで使う一時ファイル
+tempfile = "3"
