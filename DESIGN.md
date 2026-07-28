@@ -109,6 +109,7 @@ PEP（Keycloak authenticator 等）へ「なぜ拒否されたか」「どの追
 
 ```cedar
 @id("a-client-deny")
+@priority("100")
 @decision_context_reason_user("追加認証が必要です")
 @decision_context_step_up("external-auth")
 forbid(principal, action == Action::"login", resource == Client::"a-client")
@@ -124,13 +125,23 @@ when { ... };
 
 マッピング規約:
 
-- 対象は `decision_context_` プレフィックス付きアノテーションのみ。`@id` など他のアノテーションは
-  レスポンスに漏らさない。値は Cedar アノテーションの制約上、常に文字列。
+- 対象は `decision_context_` プレフィックス付きアノテーションのみ。`@id`・`@priority` など
+  他のアノテーションはレスポンスに漏らさない。値は Cedar アノテーションの制約上、常に文字列。
 - 対象ポリシーは determining policies のみ。default-deny（`forbid` 不一致の拒否）では
   `reason()` が空になるため `context` は付かない。`permit`/`forbid` どちらの
   アノテーションも対象（`decision: true` でも返しうる）。
-- 複数の determining policies に同じキーがある場合は、ポリシー id の文字列順で
-  **先勝ち**（衝突は warn ログに記録）。
+- **determining policies が複数ある場合、アノテーションを採用するのは 1 ポリシーだけ**。
+  `@priority` の昇順（値が小さいほど優先。未指定は最低優先度）で選び、同値は `@id` の
+  文字列順で先勝ちとする。キー単位のマージはしない。理由文（`reason_user`）と次アクション
+  （`step_up`）が別ポリシー由来で合成されると、単独では意味の通らない `context` になるため。
+  採用ポリシーは監査ログの `context_policy` フィールドに出す。
+- 選ばれたポリシーが `@decision_context_*` を 1 つも持たない場合、**下位のポリシーには
+  フォールバックしない**。理由を明かさない高優先度の `forbid` が、下位ポリシーの無関係な
+  文言を引き連れる事故を防ぐため（後述の予約フィールドは通常どおり付与される）。
+- `@priority` の値は非負整数のみ。不正値を含むポリシーセットはロード時に拒否する
+  （起動時は fail-fast、リロード時は反映拒否＋not-ready。§4 ③', §7, §10 の schema 検証と同じ扱い）。
+- `@priority` は `context` の出所選択にのみ影響し、**Cedar の Allow/Deny 判定には一切影響しない**
+  （`forbid` 優先という Cedar の評価規則はそのまま）。
 - 該当アノテーションが 1 つもなければ（かつ後述の予約フィールドも空なら）`context`
   フィールド自体を省略する。
 
@@ -160,9 +171,12 @@ when { ... };
   `@decision_context_errors` を定義しても PDP 値で上書きする（衝突は warn ログに記録）。
 - `reason` は `@id` を PEP に露出する（監査 id をレスポンスに載せる方針変更）。`errors` は
   ポリシー評価エラー文字列を含むため、内部情報が PEP に渡りうる点に留意（従来はログのみ）。
+- **`reason` は determining policies を全件並べる**のに対し、アノテーション由来のキーは
+  `@priority` 最優先の 1 ポリシーからしか来ない。上の例では `reason` に 2 件並ぶが、
+  `reason_user` / `step_up` はそのうち優先度の高い方の値である。
 
-ポリシー作者向けの規約（アノテーション `@id`/`@description`/`@decision_context_*` の使い分け、
-命名、`decision` の用途別マッピング、新用途の追加手順）は
+ポリシー作者向けの規約（アノテーション `@id`/`@description`/`@priority`/`@decision_context_*` の
+使い分け、命名、`decision` の用途別マッピング、新用途の追加手順）は
 [`policies/README.md`](./policies/README.md)（ポリシー定義ルール）にまとめる。
 
 ### 2.3 ポリシー例（外部認証連携の強制）

@@ -9,6 +9,7 @@ use cedar_policy::{PolicySet, Schema, ValidationMode, Validator};
 use thiserror::Error;
 use tracing::{error, info};
 
+use crate::convert;
 use crate::state::Readiness;
 
 #[derive(Debug, Error)]
@@ -27,6 +28,8 @@ pub enum PolicyError {
     },
     #[error("schema validation: {0}")]
     Validation(String),
+    #[error("invalid annotation: {0}")]
+    Annotation(String),
 }
 
 pub fn load_schema(path: &str) -> Result<Schema, crate::Error> {
@@ -54,15 +57,40 @@ pub fn validate(policy_path: &str, schema: &Schema) -> Result<usize, PolicyError
     })?;
 
     let result = Validator::new(schema.clone()).validate(&policy_set, ValidationMode::Strict);
-    if result.validation_passed() {
-        return Ok(policy_set.policies().count());
+    if !result.validation_passed() {
+        let errors = result
+            .validation_errors()
+            .map(ToString::to_string)
+            .collect::<Vec<_>>()
+            .join("; ");
+        return Err(PolicyError::Validation(errors));
     }
-    let errors = result
-        .validation_errors()
-        .map(ToString::to_string)
-        .collect::<Vec<_>>()
-        .join("; ");
-    Err(PolicyError::Validation(errors))
+
+    validate_priorities(&policy_set)?;
+
+    Ok(policy_set.policies().count())
+}
+
+// @priority は非負整数のみ。不正値を含むポリシーセットは反映しない
+fn validate_priorities(policy_set: &PolicySet) -> Result<(), PolicyError> {
+    let errors = policy_set
+        .policies()
+        .filter_map(|policy| {
+            let raw = policy.annotation(convert::PRIORITY_ANNOTATION)?;
+            convert::parse_priority(raw).is_none().then(|| {
+                format!(
+                    "policy `{}`: invalid @priority value {raw:?}",
+                    convert::display_id(policy)
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+
+    if errors.is_empty() {
+        Ok(())
+    } else {
+        Err(PolicyError::Annotation(errors.join("; ")))
+    }
 }
 
 pub fn spawn_reload_task(
@@ -101,9 +129,7 @@ async fn reload(
     let policy_count = match validate(policy_path, schema) {
         Ok(count) => count,
         Err(error) => {
-            error!(
-                "policy reload rejected: schema validation failed ({error}); serving previous policy"
-            );
+            error!("policy reload rejected: {error}; serving previous policy");
             readiness.set(false);
             return;
         }
@@ -116,6 +142,56 @@ async fn reload(
         Err(error) => {
             error!("policy reload failed (serving previous policy): {error:?}");
             readiness.set(false);
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn policy_set(src: &str) -> PolicySet {
+        PolicySet::from_str(src).expect("test policy set should parse")
+    }
+
+    #[test]
+    fn accepts_valid_priority() {
+        let ps = policy_set(
+            r#"
+            @id("lowest-value")
+            @priority("0")
+            forbid(principal, action, resource);
+
+            @id("highest-value")
+            @priority("4294967295")
+            forbid(principal, action, resource);
+
+            @id("no-priority")
+            permit(principal, action, resource);
+            "#,
+        );
+
+        assert!(validate_priorities(&ps).is_ok());
+    }
+
+    #[test]
+    fn rejects_invalid_priority() {
+        for invalid in [r#"("abc")"#, r#"("-1")"#, r#"("1.5")"#, ""] {
+            let ps = policy_set(&format!(
+                r#"
+                @id("broken")
+                @priority{invalid}
+                forbid(principal, action, resource);
+                "#
+            ));
+
+            let error = validate_priorities(&ps)
+                .expect_err(&format!("@priority{invalid} must be rejected"))
+                .to_string();
+            assert!(
+                error.contains("broken"),
+                "error should name the policy: {error}"
+            );
         }
     }
 }

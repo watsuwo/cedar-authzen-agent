@@ -1,7 +1,8 @@
 use std::str::FromStr;
 
 use cedar_policy::{
-    Context, Entities, EntityId, EntityTypeName, EntityUid, PolicyId, PolicySet, Request, Schema,
+    Context, Entities, EntityId, EntityTypeName, EntityUid, Policy, PolicyId, PolicySet, Request,
+    Schema,
 };
 use serde_json::{json, Map, Value};
 use thiserror::Error;
@@ -12,6 +13,12 @@ use crate::authzen::EvaluationRequest;
 const ACTION_TYPE: &str = "Action";
 // レスポンスにcontextを付与するためにポリシーに付与するアノテーションのprefix
 const DECISION_CONTEXT_PREFIX: &str = "decision_context_";
+// 監査ログ・優先度のタイブレークに使う可読idのアノテーション
+const ID_ANNOTATION: &str = "id";
+// 決定ポリシーが複数あるときにcontextの出所を選ぶためのアノテーション
+pub const PRIORITY_ANNOTATION: &str = "priority";
+// @priority 未指定のポリシーの優先度(値が小さいほど優先)
+const LOWEST_PRIORITY: u32 = u32::MAX;
 
 #[derive(Debug, Error)]
 pub enum ConversionError {
@@ -94,26 +101,58 @@ pub fn to_cedar(
     Ok((request, entities))
 }
 
-// アノテーションで定義されているdecision用のcontextを生成する
+// ポリシーの可読id。@id が無ければ内部id(policy0 等)にフォールバックする
+pub fn display_id(policy: &Policy) -> String {
+    policy
+        .annotation(ID_ANNOTATION)
+        .map(str::to_string)
+        .unwrap_or_else(|| policy.id().to_string())
+}
+
+// @priority の値。非負整数のみ有効で、それ以外は不正値として None を返す
+pub fn parse_priority(raw: &str) -> Option<u32> {
+    raw.parse::<u32>().ok()
+}
+
+// ポリシーの優先度。値が小さいほど優先、未指定は最低優先度
+fn priority_of(policy: &Policy) -> u32 {
+    let Some(raw) = policy.annotation(PRIORITY_ANNOTATION) else {
+        return LOWEST_PRIORITY;
+    };
+    parse_priority(raw).unwrap_or_else(|| {
+        // 不正値はロード時に弾いているため通常は到達しない
+        warn!(
+            policy_id = %display_id(policy),
+            "invalid `@priority` value {raw:?}; treating as lowest priority"
+        );
+        LOWEST_PRIORITY
+    })
+}
+
+// アノテーションで定義されているdecision用のcontextを生成する。
+// 決定ポリシーが複数ある場合は最優先の1件だけを採用し、キー単位のマージはしない
+// (文言と次アクションの出所を1ポリシーに揃えるため)。
 pub fn to_decision_context(
     policy_set: &PolicySet,
     reason_ids: &[&PolicyId],
-) -> Option<Map<String, Value>> {
-    let mut ids = reason_ids.to_vec();
-    ids.sort_unstable_by_key(|id| id.to_string());
+) -> Option<(String, Map<String, Value>)> {
+    let winner = reason_ids
+        .iter()
+        .filter_map(|id| policy_set.policy(id))
+        .min_by(|a, b| {
+            priority_of(a)
+                .cmp(&priority_of(b))
+                // 同値は @id の文字列順で先勝ち
+                .then_with(|| display_id(a).cmp(&display_id(b)))
+        })?;
 
     let mut context = Map::new();
-    for id in ids {
-        let Some(policy) = policy_set.policy(id) else {
-            continue;
-        };
-        for (key, value) in policy.annotations() {
-            insert_decision_context(&mut context, id, key, value);
-        }
+    for (key, value) in winner.annotations() {
+        insert_decision_context(&mut context, winner.id(), key, value);
     }
 
-    // 0件ならcontextは付与しない
-    (!context.is_empty()).then_some(context)
+    // 0件ならcontextは付与しない(下位のポリシーにはフォールバックしない)
+    (!context.is_empty()).then(|| (display_id(winner), context))
 }
 
 // PDP が予約するフィールド。作者の `@decision_context_*` と衝突した場合はこちらで上書きする。
@@ -154,7 +193,12 @@ fn insert_reserved(context: &mut Map<String, Value>, key: &str, value: Value) {
     }
 }
 
-fn insert_decision_context(context: &mut Map<String, Value>, id: &PolicyId, key: &str, value: &str) {
+fn insert_decision_context(
+    context: &mut Map<String, Value>,
+    id: &PolicyId,
+    key: &str,
+    value: &str,
+) {
     let Some(context_key) = key.strip_prefix(DECISION_CONTEXT_PREFIX) else {
         return;
     };
@@ -168,20 +212,8 @@ fn insert_decision_context(context: &mut Map<String, Value>, id: &PolicyId, key:
         return;
     }
 
-    match context.entry(context_key.to_string()) {
-        serde_json::map::Entry::Vacant(entry) => {
-            entry.insert(Value::String(value.to_string()));
-        }
-        // 同一名のポリシーを定義していた場合は先勝にする
-        serde_json::map::Entry::Occupied(_) => {
-            warn!(
-                policy_id = %id,
-                context_key,
-                "conflicting `@decision_context_` annotation across determining policies; \
-                 keeping the value from the lexicographically first policy id"
-            );
-        }
-    }
+    // 採用するのは単一ポリシーで、Cedar は同一ポリシー内のキー重複を許さないため衝突しない
+    context.insert(context_key.to_string(), Value::String(value.to_string()));
 }
 
 #[cfg(test)]
@@ -200,6 +232,15 @@ mod tests {
             .unwrap_or_else(|| panic!("policy `{name}` not found"))
     }
 
+    // 採用ポリシーの `@id` と context をまとめて検証するためのヘルパ
+    fn context_of(ps: &PolicySet, reason: &[&PolicyId]) -> (String, Map<String, Value>) {
+        to_decision_context(ps, reason).expect("context should be present")
+    }
+
+    fn string(value: &str) -> Option<Value> {
+        Some(Value::String(value.into()))
+    }
+
     #[test]
     fn maps_prefixed_annotations_to_context() {
         let ps = policy_set(
@@ -212,12 +253,13 @@ mod tests {
         );
         let reason = [find_id(&ps, "deny-admins")];
 
-        let context = to_decision_context(&ps, &reason).expect("context should be present");
+        let (policy_id, context) = context_of(&ps, &reason);
+        assert_eq!(policy_id, "deny-admins");
         assert_eq!(
-            context.get("reason_user"),
-            Some(&Value::String("additional authentication required".into()))
+            context.get("reason_user").cloned(),
+            string("additional authentication required")
         );
-        assert_eq!(context.get("step_up"), Some(&Value::String("mfa".into())));
+        assert_eq!(context.get("step_up").cloned(), string("mfa"));
         assert_eq!(context.len(), 2, "`@id` must not leak into the context");
     }
 
@@ -237,29 +279,144 @@ mod tests {
     }
 
     #[test]
-    fn first_policy_in_id_order_wins_on_conflict() {
+    fn lower_priority_value_wins() {
         let ps = policy_set(
             r#"
-            @id("first")
-            @decision_context_reason_user("from first")
+            @id("routine")
+            @priority("10")
+            @decision_context_reason_user("from routine")
+            @decision_context_step_up("external-auth")
             forbid(principal, action, resource);
 
-            @id("second")
-            @decision_context_reason_user("from second")
-            @decision_context_extra("kept")
+            @id("urgent")
+            @priority("1")
+            @decision_context_reason_user("from urgent")
             forbid(principal, action, resource);
             "#,
         );
-        // 逆順で渡しても、id の文字列順ソートにより "first" の値が勝つ。
+        // 渡す順に関わらず @priority が小さい "urgent" が勝つ。
+        let reason = [find_id(&ps, "routine"), find_id(&ps, "urgent")];
+
+        let (policy_id, context) = context_of(&ps, &reason);
+        assert_eq!(policy_id, "urgent");
+        assert_eq!(context.get("reason_user").cloned(), string("from urgent"));
+        // 採用は 1 ポリシーのみ。下位ポリシー固有のキーはマージされない。
+        assert_eq!(context.get("step_up"), None);
+        assert_eq!(context.len(), 1);
+    }
+
+    #[test]
+    fn missing_priority_is_lowest() {
+        let ps = policy_set(
+            r#"
+            @id("aaa-no-priority")
+            @decision_context_reason_user("from no-priority")
+            forbid(principal, action, resource);
+
+            @id("zzz-with-priority")
+            @priority("50")
+            @decision_context_reason_user("from priority-50")
+            forbid(principal, action, resource);
+            "#,
+        );
+        // @id 順では "aaa-*" が先だが、@priority 指定のある方が優先される。
+        let reason = [
+            find_id(&ps, "aaa-no-priority"),
+            find_id(&ps, "zzz-with-priority"),
+        ];
+
+        let (policy_id, context) = context_of(&ps, &reason);
+        assert_eq!(policy_id, "zzz-with-priority");
+        assert_eq!(
+            context.get("reason_user").cloned(),
+            string("from priority-50")
+        );
+    }
+
+    #[test]
+    fn equal_priority_falls_back_to_id_order() {
+        let ps = policy_set(
+            r#"
+            @id("second")
+            @priority("10")
+            @decision_context_reason_user("from second")
+            forbid(principal, action, resource);
+
+            @id("first")
+            @priority("10")
+            @decision_context_reason_user("from first")
+            forbid(principal, action, resource);
+            "#,
+        );
         let reason = [find_id(&ps, "second"), find_id(&ps, "first")];
 
-        let context = to_decision_context(&ps, &reason).expect("context should be present");
-        assert_eq!(
-            context.get("reason_user"),
-            Some(&Value::String("from first".into()))
+        let (policy_id, context) = context_of(&ps, &reason);
+        assert_eq!(policy_id, "first");
+        assert_eq!(context.get("reason_user").cloned(), string("from first"));
+    }
+
+    #[test]
+    fn winner_without_context_annotations_yields_none() {
+        let ps = policy_set(
+            r#"
+            @id("silent-urgent")
+            @priority("1")
+            forbid(principal, action, resource);
+
+            @id("verbose-routine")
+            @priority("10")
+            @decision_context_reason_user("from routine")
+            forbid(principal, action, resource);
+            "#,
         );
-        // 衝突しないキーは全ポリシーからマージされる。
-        assert_eq!(context.get("extra"), Some(&Value::String("kept".into())));
+        let reason = [
+            find_id(&ps, "silent-urgent"),
+            find_id(&ps, "verbose-routine"),
+        ];
+
+        // 最優先ポリシーが無注釈なら、下位ポリシーにフォールバックせず context を省略する。
+        assert_eq!(to_decision_context(&ps, &reason), None);
+    }
+
+    #[test]
+    fn priority_annotation_is_not_exposed() {
+        let ps = policy_set(
+            r#"
+            @id("with-priority")
+            @priority("1")
+            @decision_context_reason_user("shown")
+            forbid(principal, action, resource);
+            "#,
+        );
+        let reason = [find_id(&ps, "with-priority")];
+
+        let (_, context) = context_of(&ps, &reason);
+        assert_eq!(context.get("priority"), None);
+        assert_eq!(context.len(), 1);
+    }
+
+    #[test]
+    fn parses_only_non_negative_integers_as_priority() {
+        assert_eq!(parse_priority("0"), Some(0));
+        assert_eq!(parse_priority("1"), Some(1));
+        assert_eq!(parse_priority("4294967295"), Some(u32::MAX));
+
+        // 値なし `@priority` は空文字として渡るため不正値。
+        for invalid in ["", "abc", "-1", "1.5", " 1", "4294967296"] {
+            assert_eq!(
+                parse_priority(invalid),
+                None,
+                "{invalid:?} must be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn display_id_falls_back_to_internal_id() {
+        let ps = policy_set("permit(principal, action, resource);");
+        let policy = ps.policies().next().expect("one policy");
+
+        assert_eq!(display_id(policy), policy.id().to_string());
     }
 
     #[test]
@@ -273,8 +430,8 @@ mod tests {
         );
         let reason = [find_id(&ps, "flag-only")];
 
-        let context = to_decision_context(&ps, &reason).expect("context should be present");
-        assert_eq!(context.get("flag"), Some(&Value::String(String::new())));
+        let (_, context) = context_of(&ps, &reason);
+        assert_eq!(context.get("flag").cloned(), string(""));
     }
 
     #[test]

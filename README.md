@@ -19,14 +19,20 @@ See [`DESIGN.md`](./DESIGN.md) for the full design.
 
 ### Response `context` from policy annotations
 
-`@decision_context_<key>("value")` annotations on the policies that determined the
+`@decision_context_<key>("value")` annotations on the policy that determined the
 decision are returned as `context.<key> = "value"` in the response, letting
 policies tell the PEP *why* (e.g. `reason_user`) or *what to do next*
 (e.g. `step_up`). Other annotations such as `@id` are never exposed; if no
 `@decision_context_*` annotation applies, the `context` field is omitted.
-See [`DESIGN.md`](./DESIGN.md) §2.2 for the mapping rules.
 
-Writing policies (annotation conventions `@id`/`@description`/`@decision_context_*`,
+When several policies determine the decision, **exactly one supplies the whole
+`context`** — the one with the lowest `@priority("<non-negative integer>")`
+(unset = lowest priority, ties broken by `@id` order). Keys are never merged
+across policies, so a reason and its follow-up action always come from the same
+policy. `@priority` affects only this selection, never the Allow/Deny decision.
+See [`DESIGN.md`](./DESIGN.md) §2.2 for the full mapping rules.
+
+Writing policies (annotation conventions `@id`/`@priority`/`@description`/`@decision_context_*`,
 naming, per-action `decision` meaning, and how to add new use cases) is covered in
 [`policies/README.md`](./policies/README.md).
 
