@@ -6,7 +6,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use cedar_local_agent::public::SimplePolicySetProvider;
 use cedar_policy::{Decision, Entities, PolicyId, PolicySet, Request, Response, Schema};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::authzen::{AuthzenConfiguration, EvaluationRequest, EvaluationResponse};
 use crate::convert::{self, DecisionContext};
@@ -50,7 +50,7 @@ pub async fn evaluate(
     let reason = resolve_reason(&reason_ids, policy_set.as_deref());
     let policy_errors = collect_policy_errors(&response, &target);
 
-    // contextはprorityが最も高いポリシーから生成予している
+    // contextはprorityが最も高いポリシーから生成している
     let (context_policy, annotation_context) = match policy_set
         .as_deref()
         .and_then(|ps| convert::to_decision_context(ps, &reason_ids))
@@ -174,7 +174,7 @@ pub async fn readyz(State(state): State<AppState>) -> StatusCode {
     if state.readiness.is_ready() {
         StatusCode::OK
     } else {
-        info!("readiness probe: not ready (last policy reload failed)");
+        debug!("readiness probe: not ready (last policy reload failed)");
         StatusCode::SERVICE_UNAVAILABLE
     }
 }

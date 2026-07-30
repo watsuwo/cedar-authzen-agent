@@ -145,13 +145,13 @@ pub fn to_decision_context(
         .min_by(|a, b| {
             priority_of(a)
                 .cmp(&priority_of(b))
-                // 同値は @id の文字列順で先勝ち
+                // 文字列順で先勝ち
                 .then_with(|| display_id(a).cmp(&display_id(b)))
         })?;
 
     let mut context = Map::new();
     for (key, value) in winner.annotations() {
-        insert_annotation_entry(&mut context, winner.id(), key, value);
+        insert_annotation_entry(&mut context, key, value);
     }
 
     // アノテーションが設定されていなければ context はレスポンスしない
@@ -161,7 +161,14 @@ pub fn to_decision_context(
     })
 }
 
-/// アノテーション由来の context へ `reason`/`errors` を予約フィールドとしてマージする
+pub fn decision_context_key(annotation_key: &str) -> Option<&str> {
+    annotation_key.strip_prefix(DECISION_CONTEXT_PREFIX)
+}
+
+pub fn is_reserved_context_key(key: &str) -> bool {
+    matches!(key, RESERVED_REASON_KEY | RESERVED_ERRORS_KEY)
+}
+
 pub fn build_response_context(
     annotation_context: Option<Map<String, Value>>,
     reason: &[String],
@@ -170,10 +177,10 @@ pub fn build_response_context(
     let mut context = annotation_context.unwrap_or_default();
 
     if !reason.is_empty() {
-        insert_reserved(&mut context, RESERVED_REASON_KEY, json_string_array(reason));
+        context.insert(RESERVED_REASON_KEY.to_string(), json_string_array(reason));
     }
     if !errors.is_empty() {
-        insert_reserved(&mut context, RESERVED_ERRORS_KEY, json_string_array(errors));
+        context.insert(RESERVED_ERRORS_KEY.to_string(), json_string_array(errors));
     }
 
     (!context.is_empty()).then_some(context)
@@ -183,31 +190,12 @@ fn json_string_array(values: &[String]) -> Value {
     Value::Array(values.iter().cloned().map(Value::String).collect())
 }
 
-/// ポリシー側で `@decision_context_` アノテーションで予約キーを記載した場合は上書きせずログを出しておく
-fn insert_reserved(context: &mut Map<String, Value>, key: &str, value: Value) {
-    if context.insert(key.to_string(), value).is_some() {
-        warn!(
-            context_key = key,
-            "PDP-reserved context key overwrote an author `@decision_context_` annotation"
-        );
-    }
-}
-
-fn insert_annotation_entry(
-    context: &mut Map<String, Value>,
-    id: &PolicyId,
-    key: &str,
-    value: &str,
-) {
-    let Some(context_key) = key.strip_prefix(DECISION_CONTEXT_PREFIX) else {
+fn insert_annotation_entry(context: &mut Map<String, Value>, key: &str, value: &str) {
+    let Some(context_key) = decision_context_key(key) else {
         return;
     };
 
     if context_key.is_empty() {
-        warn!(
-            policy_id = %id,
-            "ignoring `@decision_context_` annotation without a context key"
-        );
         return;
     }
 
