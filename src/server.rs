@@ -7,16 +7,26 @@ use tracing_subscriber::EnvFilter;
 
 use cedar_local_agent::public::file::entity_provider::EntityProvider;
 use cedar_local_agent::public::file::policy_set_provider::PolicySetProvider;
+use cedar_local_agent::public::log::{
+    Config as LogConfig, ConfigBuilder as LogConfigBuilder, FieldLevel, FieldSetBuilder,
+};
 use cedar_local_agent::public::simple::{Authorizer, AuthorizerConfigBuilder};
 
 use crate::config::Config;
 use crate::state::{AppState, PdpAuthorizer, Readiness};
 use crate::{handlers, policy};
 
+// `RUST_LOG` 未設定時のフィルタ。cedar-local-agent は認可1件につき進捗 INFO を4行、
+// さらにポリシー監視のポーリングごとに戻り値 INFO を1行出す(`#[instrument(ret)]` の
+// 既定が INFO のため)。情報量が無いので既定で落とす。OCSF 監査レコードは target が
+// `cedar::simple::authorizer` で別扱いのため、この指定でも残る。
+const DEFAULT_LOG_FILTER: &str = "info,cedar_local_agent=warn";
+
 pub async fn run() -> Result<(), crate::Error> {
     tracing_subscriber::fmt()
         .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info")),
+            EnvFilter::try_from_default_env()
+                .unwrap_or_else(|_| EnvFilter::new(DEFAULT_LOG_FILTER)),
         )
         .json()
         .init();
@@ -29,7 +39,7 @@ pub async fn run() -> Result<(), crate::Error> {
 
     let schema = Arc::new(policy::load_schema(&cfg.schema_path)?);
     let provider = policy::new_provider(&cfg.policy_path)?;
-    let policy_count = policy::validate(&cfg.policy_path, &schema)
+    let (policy_src, policy_count) = policy::load_and_validate(&cfg.policy_path, &schema)
         .map_err(|e| format!("startup policy validation failed: {e}"))?;
     info!("loaded and validated policy set: {policy_count} policies");
 
@@ -42,6 +52,7 @@ pub async fn run() -> Result<(), crate::Error> {
         cfg.policy_path.clone(),
         cfg.refresh,
         readiness.clone(),
+        policy_src,
     );
 
     let state = AppState {
@@ -66,9 +77,30 @@ fn new_authorizer(provider: Arc<PolicySetProvider>) -> Result<Arc<PdpAuthorizer>
         .policy_set_provider(provider)
         // リクエストから属性値を取得するので、EntityProvider は空でよい
         .entity_provider(Arc::new(EntityProvider::default()))
+        .log_config(ocsf_log_config()?)
         .build()
         .map_err(|e| format!("authorizer config: {e}"))?;
     Ok(Arc::new(Authorizer::new(config)))
+}
+
+// OCSF 監査レコードの開示範囲。ライブラリ既定では principal/action/resource まで
+// `Sensitive<REDACTED>` に伏せられ、誰が何をしたか読めないレコードになる。判定ログ
+// (`handlers::evaluate`)と同じ `型::id` までを開示して監査レコードとして成立させる。
+// `context` と entities(properties)は IP や department 等の PII が入りうるため伏せたまま。
+fn ocsf_log_config() -> Result<LogConfig, crate::Error> {
+    let field_set = FieldSetBuilder::default()
+        .principal(true)
+        .action(true)
+        .resource(true)
+        .context(false)
+        .entities(FieldLevel::None)
+        .build()
+        .map_err(|e| format!("ocsf field set: {e}"))?;
+
+    LogConfigBuilder::default()
+        .field_set(field_set)
+        .build()
+        .map_err(|e| format!("ocsf log config: {e}").into())
 }
 
 fn router(state: AppState) -> Router {

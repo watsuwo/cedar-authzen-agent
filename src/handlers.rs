@@ -6,7 +6,7 @@ use axum::extract::State;
 use axum::http::{HeaderMap, StatusCode, header};
 use cedar_local_agent::public::SimplePolicySetProvider;
 use cedar_policy::{Decision, Entities, PolicyId, PolicySet, Request, Response, Schema};
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 use crate::authzen::{AuthzenConfiguration, EvaluationRequest, EvaluationResponse};
 use crate::convert::{self, DecisionContext};
@@ -174,7 +174,9 @@ pub async fn readyz(State(state): State<AppState>) -> StatusCode {
     if state.readiness.is_ready() {
         StatusCode::OK
     } else {
-        info!("readiness probe: not ready (last policy reload failed)");
+        // 未 ready の間はプローブ間隔で繰り返し呼ばれる。原因は reload 側の
+        // ERROR 1行で足りるため、ここは調査時だけ見える DEBUG に留める。
+        debug!("readiness probe: not ready (last policy reload failed)");
         StatusCode::SERVICE_UNAVAILABLE
     }
 }
