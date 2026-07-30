@@ -8,7 +8,6 @@ use cedar_policy::Schema;
 
 pub type PdpAuthorizer = Authorizer<PolicySetProvider, EntityProvider>;
 
-/// `/readyz` が参照する準備状態（ポリシー再読み込みタスクと共有する）
 #[derive(Clone)]
 pub struct Readiness(Arc<AtomicBool>);
 

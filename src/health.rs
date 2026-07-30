@@ -7,7 +7,7 @@ use crate::config::Config;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// `/healthz` を叩き 200 が返れば成功終了する HEALTHCHECK 用サブコマンド
+/// HEALTHCHECK 用サブコマンド
 pub fn run() -> ExitCode {
     let target = Config::health_target();
     let mut stream = match TcpStream::connect_timeout(&target, CONNECT_TIMEOUT) {

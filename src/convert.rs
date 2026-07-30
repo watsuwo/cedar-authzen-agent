@@ -10,10 +10,10 @@ use tracing::warn;
 
 use crate::authzen::EvaluationRequest;
 
-/// レスポンスに context を付与するためにポリシーに付与するアノテーションの prefix
-const DECISION_CONTEXT_PREFIX: &str = "decision_context_";
-
 const ID_ANNOTATION: &str = "id";
+
+/// レスポンスに context に任意の値を付与するためのアノテーション
+const DECISION_CONTEXT_PREFIX: &str = "decision_context_";
 
 /// アノテーションで定義されるポリシーの優先度
 pub const PRIORITY_ANNOTATION: &str = "priority";

@@ -13,10 +13,8 @@ use crate::convert::{self, DecisionContext};
 use crate::error::ApiError;
 use crate::state::AppState;
 
-/// context の出所ポリシーが無い場合のログ表記
 const NO_CONTEXT_POLICY: &str = "-";
 
-/// ログに出すリクエスト対象の表示名
 struct LogTarget {
     subject: String,
     action: String,
@@ -33,7 +31,6 @@ impl LogTarget {
     }
 }
 
-/// AuthZEN Access Evaluation API(単一評価)
 pub async fn evaluate(
     State(state): State<AppState>,
     body: Bytes,
@@ -53,7 +50,7 @@ pub async fn evaluate(
     let reason = resolve_reason(&reason_ids, policy_set.as_deref());
     let policy_errors = collect_policy_errors(&response, &target);
 
-    // context は最優先の決定ポリシー1件から生成し予約フィールドを付与する
+    // contextはprorityが最も高いポリシーから生成予している
     let (context_policy, annotation_context) = match policy_set
         .as_deref()
         .and_then(|ps| convert::to_decision_context(ps, &reason_ids))
@@ -76,7 +73,6 @@ pub async fn evaluate(
     Ok(Json(EvaluationResponse::new(allowed).with_context(context)))
 }
 
-/// リクエストボディを AuthZEN 評価リクエストへデシリアライズする
 fn parse_request(body: &Bytes) -> Result<EvaluationRequest, ApiError> {
     serde_json::from_slice(body).map_err(|error| {
         warn!(
@@ -88,7 +84,6 @@ fn parse_request(body: &Bytes) -> Result<EvaluationRequest, ApiError> {
     })
 }
 
-/// AuthZEN リクエストを Cedar のリクエスト・エンティティへ変換する
 fn convert_request(
     request: &EvaluationRequest,
     schema: &Schema,
@@ -104,7 +99,6 @@ fn convert_request(
     })
 }
 
-/// Cedar による認可を実行する
 async fn authorize(
     state: &AppState,
     request: &Request,
@@ -126,7 +120,6 @@ async fn authorize(
         })
 }
 
-/// determining policies を可読 id へ解決しソートして返す
 fn resolve_reason(reason_ids: &[&PolicyId], policy_set: Option<&PolicySet>) -> Vec<String> {
     let mut reason = reason_ids
         .iter()
@@ -140,7 +133,6 @@ fn resolve_reason(reason_ids: &[&PolicyId], policy_set: Option<&PolicySet>) -> V
     reason
 }
 
-/// 評価中のポリシーエラーを集める（該当ポリシーは無視されるため warn に留める）
 fn collect_policy_errors(response: &Response, target: &LogTarget) -> Vec<String> {
     let errors = response
         .diagnostics()
@@ -158,12 +150,10 @@ fn collect_policy_errors(response: &Response, target: &LogTarget) -> Vec<String>
     errors
 }
 
-/// 経過時間をミリ秒で返す（`u64` に収まらない値は飽和で丸める）
 fn latency_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
 
-/// PDP ディスカバリメタデータ
 pub async fn metadata(headers: HeaderMap) -> Json<AuthzenConfiguration> {
     let host = headers
         .get(header::HOST)
@@ -176,12 +166,10 @@ pub async fn metadata(headers: HeaderMap) -> Json<AuthzenConfiguration> {
     })
 }
 
-/// Liveness プローブ
 pub async fn healthz() -> StatusCode {
     StatusCode::OK
 }
 
-/// Readiness プローブ(ポリシー再読み込みの成否を反映)
 pub async fn readyz(State(state): State<AppState>) -> StatusCode {
     if state.readiness.is_ready() {
         StatusCode::OK

@@ -42,7 +42,6 @@ pub enum PolicyError {
     Annotation(String),
 }
 
-/// Cedar スキーマを JSON ファイルから読み込む
 pub fn load_schema(path: &str) -> Result<Schema, PolicyError> {
     let file = std::fs::File::open(path).map_err(|source| PolicyError::FileRead {
         path: path.to_string(),
@@ -54,7 +53,6 @@ pub fn load_schema(path: &str) -> Result<Schema, PolicyError> {
     })
 }
 
-/// ポリシーファイルを読み込む `PolicySetProvider` を生成する
 pub fn new_provider(policy_path: &str) -> Result<Arc<PolicySetProvider>, PolicyError> {
     let config = policy_set_provider::ConfigBuilder::default()
         .policy_set_path(policy_path.to_string())
@@ -65,7 +63,7 @@ pub fn new_provider(policy_path: &str) -> Result<Arc<PolicySetProvider>, PolicyE
     Ok(Arc::new(provider))
 }
 
-/// ポリシーをスキーマ・アノテーションの両面から検証しポリシー数を返す
+/// ポリシーを検証して成功したらポリシー数を返す
 pub fn validate(policy_path: &str, schema: &Schema) -> Result<usize, PolicyError> {
     let src = std::fs::read_to_string(policy_path).map_err(|source| PolicyError::FileRead {
         path: policy_path.to_string(),
@@ -91,7 +89,7 @@ pub fn validate(policy_path: &str, schema: &Schema) -> Result<usize, PolicyError
     Ok(policy_set.policies().count())
 }
 
-/// `@priority` は非負整数のみで、不正値を含むポリシーセットは反映しない
+/// @priority アノテーションの値を検証する
 fn validate_priorities(policy_set: &PolicySet) -> Result<(), PolicyError> {
     let errors = policy_set
         .policies()
@@ -113,7 +111,7 @@ fn validate_priorities(policy_set: &PolicySet) -> Result<(), PolicyError> {
     }
 }
 
-/// ポリシーの変更を監視し検証を通ったものだけを反映するタスクを起動する
+/// ポリシーの変更を監視し検証を通った場合は反映するタスクを起動する
 pub fn spawn_reload_task(
     provider: Arc<PolicySetProvider>,
     schema: Arc<Schema>,
