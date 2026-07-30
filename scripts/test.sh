@@ -1,5 +1,5 @@
 #!/bin/sh
-et -eu
+set -eu
 
 cd "$(dirname "$0")/.." || exit 1
 START_TIME=$(date +%s)

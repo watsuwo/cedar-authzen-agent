@@ -63,7 +63,6 @@ pub fn new_provider(policy_path: &str) -> Result<Arc<PolicySetProvider>, PolicyE
     Ok(Arc::new(provider))
 }
 
-/// ポリシーファイルの内容を読む
 fn read_source(policy_path: &str) -> Result<String, PolicyError> {
     std::fs::read_to_string(policy_path).map_err(|source| PolicyError::FileRead {
         path: policy_path.to_string(),
@@ -71,8 +70,6 @@ fn read_source(policy_path: &str) -> Result<String, PolicyError> {
     })
 }
 
-/// ポリシーを検証して成功したら内容とポリシー数を返す。
-/// 内容を返すのはリロード時に「前回適用した内容と同じか」を判定するため（[`spawn_reload_task`]）
 pub fn load_and_validate(
     policy_path: &str,
     schema: &Schema,
@@ -82,7 +79,6 @@ pub fn load_and_validate(
     Ok((src, count))
 }
 
-/// 読み込み済みのポリシーソースを検証してポリシー数を返す
 fn validate_source(src: &str, policy_path: &str, schema: &Schema) -> Result<usize, PolicyError> {
     let policy_set = PolicySet::from_str(src).map_err(|source| PolicyError::PolicyParse {
         path: policy_path.to_string(),
@@ -105,8 +101,6 @@ fn validate_source(src: &str, policy_path: &str, schema: &Schema) -> Result<usiz
     Ok(policy_set.policies().count())
 }
 
-/// `@decision_context_*` のキー名を検証する。どちらのケースも「作者が書いた値が
-/// レスポンスに出ない」不備で、黙って無視すると気付けないためロード時に弾く
 fn validate_decision_contexts(policy_set: &PolicySet) -> Result<(), PolicyError> {
     let mut errors = policy_set
         .policies()
@@ -133,13 +127,11 @@ fn validate_decision_contexts(policy_set: &PolicySet) -> Result<(), PolicyError>
     if errors.is_empty() {
         Ok(())
     } else {
-        // `annotations()` の反復順は非決定的なので、メッセージを安定させる
         errors.sort_unstable();
         Err(PolicyError::Annotation(errors.join("; ")))
     }
 }
 
-/// @priority アノテーションの値を検証する
 fn validate_priorities(policy_set: &PolicySet) -> Result<(), PolicyError> {
     let errors = policy_set
         .policies()
@@ -161,9 +153,6 @@ fn validate_priorities(policy_set: &PolicySet) -> Result<(), PolicyError> {
     }
 }
 
-/// ポリシーの変更を監視し検証を通った場合は反映するタスクを起動する。
-/// `loaded_src` は起動時に検証を通した内容。監視タスクは起動後の初回通知を必ず発火させる
-/// (内容ハッシュの比較対象を持たないため)ので、これと突き合わせて空振りを握り潰す
 pub fn spawn_reload_task(
     provider: Arc<PolicySetProvider>,
     schema: Arc<Schema>,
@@ -200,8 +189,6 @@ pub fn spawn_reload_task(
     });
 }
 
-/// 変更を検知したポリシーを再検証し成功時のみ provider へ反映する。
-/// `loaded_src` は provider が現在配っている内容で、反映に成功したときだけ更新する
 async fn reload(
     provider: &PolicySetProvider,
     schema: &Schema,
@@ -220,8 +207,6 @@ async fn reload(
     };
 
     if src == *loaded_src {
-        // 監視タスクの初回通知、および失敗後に元の内容へ戻された場合がここに来る。
-        // provider は既にこの内容を配っているので、readiness も戻してよい。
         debug!("policy file event without a content change; skipping reload");
         readiness.set_ready(true);
         return;

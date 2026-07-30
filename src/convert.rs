@@ -145,7 +145,7 @@ pub fn to_decision_context(
         .min_by(|a, b| {
             priority_of(a)
                 .cmp(&priority_of(b))
-                // 同値は @id の文字列順で先勝ち
+                // 文字列順で先勝ち
                 .then_with(|| display_id(a).cmp(&display_id(b)))
         })?;
 
@@ -161,17 +161,14 @@ pub fn to_decision_context(
     })
 }
 
-/// `@decision_context_*` アノテーションの context キー部分。prefix が付かないキーは `None`
 pub fn decision_context_key(annotation_key: &str) -> Option<&str> {
     annotation_key.strip_prefix(DECISION_CONTEXT_PREFIX)
 }
 
-/// PDP が予約している context キーか。予約キーは作者アノテーションより優先される
 pub fn is_reserved_context_key(key: &str) -> bool {
     matches!(key, RESERVED_REASON_KEY | RESERVED_ERRORS_KEY)
 }
 
-/// アノテーション由来の context へ `reason`/`errors` を予約フィールドとしてマージする
 pub fn build_response_context(
     annotation_context: Option<Map<String, Value>>,
     reason: &[String],
@@ -179,8 +176,6 @@ pub fn build_response_context(
 ) -> Option<Map<String, Value>> {
     let mut context = annotation_context.unwrap_or_default();
 
-    // 予約キーと衝突するアノテーションはロード時に弾いている
-    // (`policy::validate_decision_contexts`)ため、ここでの上書きは起こらない。
     if !reason.is_empty() {
         context.insert(RESERVED_REASON_KEY.to_string(), json_string_array(reason));
     }
@@ -200,8 +195,6 @@ fn insert_annotation_entry(context: &mut Map<String, Value>, key: &str, value: &
         return;
     };
 
-    // キー名なしはロード時に弾いているため通常は到達しない
-    // (`policy::validate_decision_contexts`)
     if context_key.is_empty() {
         return;
     }

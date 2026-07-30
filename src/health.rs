@@ -7,7 +7,6 @@ use crate::config::Config;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(5);
 
-/// HEALTHCHECK 用サブコマンド
 pub fn run() -> ExitCode {
     let target = Config::health_target();
     let mut stream = match TcpStream::connect_timeout(&target, CONNECT_TIMEOUT) {

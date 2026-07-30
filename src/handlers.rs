@@ -50,7 +50,7 @@ pub async fn evaluate(
     let reason = resolve_reason(&reason_ids, policy_set.as_deref());
     let policy_errors = collect_policy_errors(&response, &target);
 
-    // contextはprorityが最も高いポリシーから生成予している
+    // contextはprorityが最も高いポリシーから生成している
     let (context_policy, annotation_context) = match policy_set
         .as_deref()
         .and_then(|ps| convert::to_decision_context(ps, &reason_ids))
@@ -174,8 +174,6 @@ pub async fn readyz(State(state): State<AppState>) -> StatusCode {
     if state.readiness.is_ready() {
         StatusCode::OK
     } else {
-        // 未 ready の間はプローブ間隔で繰り返し呼ばれる。原因は reload 側の
-        // ERROR 1行で足りるため、ここは調査時だけ見える DEBUG に留める。
         debug!("readiness probe: not ready (last policy reload failed)");
         StatusCode::SERVICE_UNAVAILABLE
     }
