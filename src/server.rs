@@ -13,7 +13,7 @@ use crate::config::Config;
 use crate::state::{AppState, PdpAuthorizer, Readiness};
 use crate::{handlers, policy};
 
-/// 設定読み込みからポリシー検証、HTTP サーバ起動までのライフサイクルを実行する。
+/// 設定読み込みからポリシー検証、HTTP サーバ起動までを実行する
 pub async fn run() -> Result<(), crate::Error> {
     tracing_subscriber::fmt()
         .with_env_filter(
@@ -65,7 +65,7 @@ pub async fn run() -> Result<(), crate::Error> {
     Ok(())
 }
 
-/// ポリシー provider を束ねた Cedar オーソライザを生成する。
+/// ポリシー provider を束ねた Cedar オーソライザを生成する
 fn new_authorizer(provider: Arc<PolicySetProvider>) -> Result<Arc<PdpAuthorizer>, crate::Error> {
     let config = AuthorizerConfigBuilder::default()
         .policy_set_provider(provider)
@@ -76,7 +76,7 @@ fn new_authorizer(provider: Arc<PolicySetProvider>) -> Result<Arc<PdpAuthorizer>
     Ok(Arc::new(Authorizer::new(config)))
 }
 
-/// エンドポイントを束ねたルータを組み立てる。
+/// エンドポイントを束ねたルータを組み立てる
 fn router(state: AppState) -> Router {
     Router::new()
         .route("/access/v1/evaluation", post(handlers::evaluate))
@@ -89,7 +89,7 @@ fn router(state: AppState) -> Router {
         .with_state(state)
 }
 
-/// SIGTERM を受信するまで待機する。受信後に graceful shutdown が始まる。
+/// SIGTERM を受信するまで待機する
 async fn shutdown_signal() {
     #[cfg(unix)]
     match tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()) {

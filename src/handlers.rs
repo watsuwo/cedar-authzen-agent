@@ -16,7 +16,7 @@ use crate::state::AppState;
 /// context の出所ポリシーが無い場合のログ表記
 const NO_CONTEXT_POLICY: &str = "-";
 
-/// ログに出すリクエスト対象の表示名。
+/// ログに出すリクエスト対象の表示名
 struct LogTarget {
     subject: String,
     action: String,
@@ -53,8 +53,7 @@ pub async fn evaluate(
     let reason = resolve_reason(&reason_ids, policy_set.as_deref());
     let policy_errors = collect_policy_errors(&response, &target);
 
-    // アノテーション由来の context は最優先の決定ポリシー1件から生成し（@priority 昇順）、
-    // そこへ cedar-local-agent 応答由来の `reason`/`errors` を予約フィールドとして付与する。
+    // context は最優先の決定ポリシー1件から生成し予約フィールドを付与する
     let (context_policy, annotation_context) = match policy_set
         .as_deref()
         .and_then(|ps| convert::to_decision_context(ps, &reason_ids))
@@ -77,7 +76,7 @@ pub async fn evaluate(
     Ok(Json(EvaluationResponse::new(allowed).with_context(context)))
 }
 
-/// リクエストボディを AuthZEN 評価リクエストへデシリアライズする。
+/// リクエストボディを AuthZEN 評価リクエストへデシリアライズする
 fn parse_request(body: &Bytes) -> Result<EvaluationRequest, ApiError> {
     serde_json::from_slice(body).map_err(|error| {
         warn!(
@@ -89,7 +88,7 @@ fn parse_request(body: &Bytes) -> Result<EvaluationRequest, ApiError> {
     })
 }
 
-/// AuthZEN リクエストを Cedar のリクエスト・エンティティへ変換する。
+/// AuthZEN リクエストを Cedar のリクエスト・エンティティへ変換する
 fn convert_request(
     request: &EvaluationRequest,
     schema: &Schema,
@@ -105,7 +104,7 @@ fn convert_request(
     })
 }
 
-/// Cedar による認可を実行する。
+/// Cedar による認可を実行する
 async fn authorize(
     state: &AppState,
     request: &Request,
@@ -127,9 +126,7 @@ async fn authorize(
         })
 }
 
-/// determining policies を可読 id(`@id`、無ければ内部 id)へ解決する。ログと
-/// レスポンス context の予約フィールド `reason` の両方で使う。
-/// `reason()` の反復順は非決定的なので、レスポンス/ログを安定させるためソートする。
+/// determining policies を可読 id へ解決しソートして返す
 fn resolve_reason(reason_ids: &[&PolicyId], policy_set: Option<&PolicySet>) -> Vec<String> {
     let mut reason = reason_ids
         .iter()
@@ -143,7 +140,7 @@ fn resolve_reason(reason_ids: &[&PolicyId], policy_set: Option<&PolicySet>) -> V
     reason
 }
 
-/// 評価中に発生したポリシーエラーを集める。該当ポリシーは無視されるため warn に留める。
+/// 評価中のポリシーエラーを集める（該当ポリシーは無視されるため warn に留める）
 fn collect_policy_errors(response: &Response, target: &LogTarget) -> Vec<String> {
     let errors = response
         .diagnostics()
@@ -161,7 +158,7 @@ fn collect_policy_errors(response: &Response, target: &LogTarget) -> Vec<String>
     errors
 }
 
-/// 経過時間をミリ秒で返す。`u64` に収まらない経過時間は起こらないため飽和で丸める。
+/// 経過時間をミリ秒で返す（`u64` に収まらない値は飽和で丸める）
 fn latency_ms(started: Instant) -> u64 {
     u64::try_from(started.elapsed().as_millis()).unwrap_or(u64::MAX)
 }
@@ -215,8 +212,6 @@ mod tests {
 
     #[test]
     fn log_target_formats_the_authzen_triple() {
-        // 監査ログの検索キーになるため、`型::id` の表記を固定する。
-        // action だけは AuthZEN に型が無いので名前をそのまま使う。
         let request: EvaluationRequest = serde_json::from_value(serde_json::json!({
             "subject": { "type": "User", "id": "alice" },
             "action": { "name": "login" },
@@ -232,8 +227,6 @@ mod tests {
 
     #[test]
     fn resolve_reason_sorts_display_ids() {
-        // 内部 id ではなく `@id` の可読名へ解決し、かつ並びを安定させること。
-        // 同じ入力で毎回同じレスポンス/ログになる必要がある。
         let ps = policy_set(
             r#"
             @id("zebra")
@@ -243,7 +236,6 @@ mod tests {
             forbid(principal, action, resource);
             "#,
         );
-        // 渡す順に関わらずソート済みで返る（`reason()` の反復順は非決定的なため）。
         let reason_ids = [find_id(&ps, "zebra"), find_id(&ps, "alpha")];
 
         assert_eq!(resolve_reason(&reason_ids, Some(&ps)), ["alpha", "zebra"]);
@@ -251,8 +243,6 @@ mod tests {
 
     #[test]
     fn resolve_reason_falls_back_to_internal_id_for_unknown_policies() {
-        // provider から policy set を取れなかった場合でも reason を空にせず、
-        // 内部 id を出して決定根拠の追跡を維持する。
         let ps = policy_set(
             r#"
             @id("named")
@@ -268,8 +258,6 @@ mod tests {
 
     #[test]
     fn resolve_reason_is_empty_without_determining_policies() {
-        // 決定ポリシーが無いとき（暗黙 deny 等）は空。呼び出し側はこれを見て
-        // 予約フィールド `reason` 自体を省略する。
         assert!(resolve_reason(&[], None).is_empty());
     }
 }

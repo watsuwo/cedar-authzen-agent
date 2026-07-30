@@ -50,8 +50,6 @@ mod tests {
 
     #[test]
     fn client_errors_map_to_400() {
-        // リクエスト起因の失敗はクライアント側の問題として 400 を返す。
-        // 500 にすると PEP がリトライして無駄に負荷をかける。
         assert_eq!(
             ApiError::InvalidJson(json_error()).status(),
             StatusCode::BAD_REQUEST
@@ -64,7 +62,6 @@ mod tests {
 
     #[test]
     fn evaluation_failure_maps_to_500() {
-        // 認可器の失敗は PDP 側の問題なので 500。リトライの余地がある。
         assert_eq!(
             ApiError::Evaluation.status(),
             StatusCode::INTERNAL_SERVER_ERROR
@@ -73,15 +70,12 @@ mod tests {
 
     #[test]
     fn error_codes_are_stable() {
-        // レスポンスの `error` フィールドとして外部に出るため、値を固定する。
         assert_eq!(ApiError::InvalidJson(json_error()).code(), "invalid_json");
         assert_eq!(ApiError::Evaluation.code(), "evaluation_failed");
     }
 
     #[test]
     fn conversion_errors_delegate_their_code() {
-        // 変換エラーは一律 `invalid_request` に丸めず、ConversionError の
-        // 詳細コードをそのまま外に出す（PEP がどの入力を直すか判別できるように）。
         assert_eq!(
             ApiError::Conversion(ConversionError::Context(String::new())).code(),
             "invalid_context"
@@ -90,8 +84,6 @@ mod tests {
 
     #[test]
     fn evaluation_failure_hides_internal_details() {
-        // 認可器の内部エラーは固定文言に潰し、ポリシー構成をレスポンスから
-        // 推測されないようにする（詳細はサーバログにのみ残す）。
         assert_eq!(ApiError::Evaluation.to_string(), "authorization failed");
     }
 }

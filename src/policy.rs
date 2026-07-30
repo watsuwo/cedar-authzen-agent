@@ -42,7 +42,7 @@ pub enum PolicyError {
     Annotation(String),
 }
 
-/// Cedar スキーマを JSON ファイルから読み込む。
+/// Cedar スキーマを JSON ファイルから読み込む
 pub fn load_schema(path: &str) -> Result<Schema, PolicyError> {
     let file = std::fs::File::open(path).map_err(|source| PolicyError::FileRead {
         path: path.to_string(),
@@ -54,7 +54,7 @@ pub fn load_schema(path: &str) -> Result<Schema, PolicyError> {
     })
 }
 
-/// ポリシーファイルを読み込む `PolicySetProvider` を生成する。
+/// ポリシーファイルを読み込む `PolicySetProvider` を生成する
 pub fn new_provider(policy_path: &str) -> Result<Arc<PolicySetProvider>, PolicyError> {
     let config = policy_set_provider::ConfigBuilder::default()
         .policy_set_path(policy_path.to_string())
@@ -65,7 +65,7 @@ pub fn new_provider(policy_path: &str) -> Result<Arc<PolicySetProvider>, PolicyE
     Ok(Arc::new(provider))
 }
 
-/// ポリシーをスキーマ・アノテーションの両面から検証し、ポリシー数を返す。
+/// ポリシーをスキーマ・アノテーションの両面から検証しポリシー数を返す
 pub fn validate(policy_path: &str, schema: &Schema) -> Result<usize, PolicyError> {
     let src = std::fs::read_to_string(policy_path).map_err(|source| PolicyError::FileRead {
         path: policy_path.to_string(),
@@ -91,7 +91,7 @@ pub fn validate(policy_path: &str, schema: &Schema) -> Result<usize, PolicyError
     Ok(policy_set.policies().count())
 }
 
-/// `@priority` は非負整数のみ。不正値を含むポリシーセットは反映しない。
+/// `@priority` は非負整数のみで、不正値を含むポリシーセットは反映しない
 fn validate_priorities(policy_set: &PolicySet) -> Result<(), PolicyError> {
     let errors = policy_set
         .policies()
@@ -113,7 +113,7 @@ fn validate_priorities(policy_set: &PolicySet) -> Result<(), PolicyError> {
     }
 }
 
-/// ポリシーファイルの変更を監視し、検証を通ったものだけを反映するタスクを起動する。
+/// ポリシーの変更を監視し検証を通ったものだけを反映するタスクを起動する
 pub fn spawn_reload_task(
     provider: Arc<PolicySetProvider>,
     schema: Arc<Schema>,
@@ -140,7 +140,7 @@ pub fn spawn_reload_task(
     });
 }
 
-/// 変更を検知したポリシーを再検証し、成功時のみ provider へ反映する。
+/// 変更を検知したポリシーを再検証し成功時のみ provider へ反映する
 async fn reload(
     provider: &PolicySetProvider,
     schema: &Schema,
@@ -178,7 +178,6 @@ mod tests {
 
     #[test]
     fn accepts_valid_priority() {
-        // `@priority` の境界値（0 と u32 上限）と未指定が混在しても通ること。
         let ps = policy_set(
             r#"
             @id("lowest-value")
@@ -199,9 +198,6 @@ mod tests {
 
     #[test]
     fn rejects_invalid_priority() {
-        // 不正な `@priority` はエラー種別とポリシー名の両方を報告すること。
-        // 運用者がどのポリシーを直せばよいか、ログだけで分かる必要がある。
-        // 末尾の `""` は値なし `@priority`（空文字として渡る）のケース。
         for invalid in [r#"("abc")"#, r#"("-1")"#, r#"("1.5")"#, ""] {
             let ps = policy_set(&format!(
                 r#"
@@ -224,7 +220,6 @@ mod tests {
         }
     }
 
-    // 検証テスト用の自己完結スキーマ。`User` -> `login` -> `Client` のみ許可する。
     const TEST_SCHEMA: &str = r#"{
         "": {
             "entityTypes": {
@@ -256,8 +251,6 @@ mod tests {
 
     #[test]
     fn load_schema_reports_missing_file() {
-        // 起動時にスキーマが見つからないケース。マウント漏れ等の設定ミスを
-        // 「ファイルが読めない」と切り分けられる形で報告する。
         let error = load_schema("/nonexistent/schema.json").expect_err("missing file must fail");
 
         assert!(
@@ -268,7 +261,6 @@ mod tests {
 
     #[test]
     fn load_schema_reports_malformed_json() {
-        // ファイルは読めるが中身が壊れているケース。上とは別種別で報告する。
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write_file(&dir, "schema.json", "{ not json");
 
@@ -281,8 +273,6 @@ mod tests {
 
     #[test]
     fn validate_counts_policies_that_pass() {
-        // 正常系。戻り値のポリシー数は起動ログと reload ログに出るため、
-        // 実際に読み込まれた件数と一致している必要がある。
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write_file(
             &dir,
@@ -303,8 +293,6 @@ mod tests {
 
     #[test]
     fn validate_reports_missing_policy_file() {
-        // 以下3件は「検証を通らないポリシーは反映しない」ための入口ごとの失敗種別。
-        // reload 時はこのエラーを見て readiness を落とし、直前のポリシーを配り続ける。
         let error = validate("/nonexistent/policies.cedar", &test_schema())
             .expect_err("missing file must fail");
 
@@ -316,7 +304,6 @@ mod tests {
 
     #[test]
     fn validate_reports_unparsable_policy() {
-        // Cedar 構文として成立しないファイル。
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write_file(&dir, "policies.cedar", "this is not cedar");
 
@@ -329,8 +316,6 @@ mod tests {
 
     #[test]
     fn validate_reports_schema_violation() {
-        // 構文は正しいがスキーマと矛盾するポリシー。
-        // `Client` は principal になれないため strict 検証で落ちる。
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write_file(
             &dir,
@@ -350,8 +335,6 @@ mod tests {
 
     #[test]
     fn validate_rejects_invalid_priority_annotation() {
-        // アノテーション検証がスキーマ検証とは独立に効くこと。`@priority` が壊れると
-        // context の出所が変わるため、Cedar 的に妥当でも反映させない。
         let dir = tempfile::tempdir().expect("tempdir");
         let path = write_file(
             &dir,
@@ -363,7 +346,6 @@ mod tests {
             "#,
         );
 
-        // スキーマ検証を通っても、アノテーション不正なら反映しない。
         let error = validate(&path, &test_schema()).expect_err("invalid @priority must fail");
         assert!(
             matches!(error, PolicyError::Annotation(_)),

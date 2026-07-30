@@ -8,7 +8,7 @@ use cedar_policy::Schema;
 
 pub type PdpAuthorizer = Authorizer<PolicySetProvider, EntityProvider>;
 
-/// `/readyz` が参照する準備状態。ポリシー再読み込みタスクと共有する。
+/// `/readyz` が参照する準備状態（ポリシー再読み込みタスクと共有する）
 #[derive(Clone)]
 pub struct Readiness(Arc<AtomicBool>);
 
@@ -40,7 +40,6 @@ mod tests {
 
     #[test]
     fn readiness_round_trips() {
-        // `/readyz` の応答を決める最小の読み書き。
         let readiness = Readiness::new(true);
         assert!(readiness.is_ready());
 
@@ -50,8 +49,6 @@ mod tests {
 
     #[test]
     fn readiness_clones_share_state() {
-        // reload タスクと `/readyz` ハンドラは別クローンを持つ。Clone が
-        // 値のコピーになっていると再読み込み失敗が readiness に反映されない。
         let readiness = Readiness::new(true);
         let clone = readiness.clone();
 

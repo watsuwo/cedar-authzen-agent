@@ -1,0 +1,36 @@
+# cargo-deny configuration (run via scripts/check.sh).
+# Ref: https://github.com/EmbarkStudios/cargo-deny
+#
+# Adapted from cedar-local-agent's deny.toml for this crate's dependency tree.
+
+[graph]
+# Only the targets we actually ship (Dockerfile: distroless/cc on Fargate).
+# This prunes the windows-*/wasm/redox crates from the graph, so their licenses
+# and duplicate versions do not produce noise.
+targets = [
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+
+[advisories]
+ignore = []
+
+[bans]
+deny = []
+skip = []
+skip-tree = []
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"
+
+[licenses]
+confidence-threshold = 0.93
+allow = [
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception", # ar_archive_writer, wasi
+    "MIT",
+    "Unicode-3.0",                    # unicode-ident
+    "BSD-3-Clause",                   # matchit (axum): "MIT AND BSD-3-Clause"
+]
+exceptions = []
